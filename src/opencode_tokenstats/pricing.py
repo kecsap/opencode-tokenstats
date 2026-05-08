@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +46,11 @@ class PricingLookup:
         raw_name = model_name.strip().lower()
         if not raw_name:
             return None
+
+        for key in canonical_model_keys(raw_name):
+            direct = self.pricing_data.get(key)
+            if direct is not None:
+                return direct
 
         exact = self.pricing_data.get(raw_name)
         if exact is not None:
@@ -88,3 +96,55 @@ def estimate_session_cost_usd(
     cache_read_cost = (max(0, cache_read_tokens) / 1_000_000) * pricing.cache_read
     cache_write_cost = (max(0, cache_write_tokens) / 1_000_000) * pricing.cache_write
     return input_cost + output_cost + cache_read_cost + cache_write_cost
+
+
+def canonical_model_keys(model: str) -> list[str]:
+    raw = (model or "").strip().lower()
+    if not raw:
+        return []
+    keys = [raw]
+    if "/" in raw:
+        provider, bare = raw.split("/", 1)
+        keys.extend([bare, provider + "/" + bare])
+    else:
+        keys.extend([f"openai/{raw}", f"azure/{raw}"])
+    out: list[str] = []
+    for k in keys:
+        if k and k not in out:
+            out.append(k)
+    return out
+
+
+def load_pricing_lookup() -> PricingLookup:
+    candidates: list[Path] = []
+    env = os.environ.get("OPENCODE_MODEL_PRICING_FILE")
+    if env:
+        candidates.append(Path(os.path.expanduser(os.path.expandvars(env))))
+
+    repo_root = Path(__file__).resolve().parents[2]
+    candidates.append(repo_root / "opencode-tokenscope" / "plugin" / "models.json")
+    candidates.append(repo_root / "models.json")
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                continue
+            data: dict[str, ModelPricing] = {}
+            for key, val in payload.items():
+                if not isinstance(key, str) or not isinstance(val, dict):
+                    continue
+                data[key.lower()] = ModelPricing(
+                    input=float(val.get("input", 0) or 0),
+                    output=float(val.get("output", 0) or 0),
+                    cache_write=float(val.get("cacheWrite", val.get("cache_write", 0)) or 0),
+                    cache_read=float(val.get("cacheRead", val.get("cache_read", 0)) or 0),
+                )
+            data.setdefault("default", ModelPricing(input=1.0, output=3.0, cache_write=0.0, cache_read=0.0))
+            return PricingLookup(data)
+        except Exception:
+            continue
+
+    return PricingLookup({"default": ModelPricing(input=1.0, output=3.0, cache_write=0.0, cache_read=0.0)})

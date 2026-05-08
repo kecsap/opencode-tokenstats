@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .pricing import ModelPricing, PricingLookup, estimate_session_cost_usd
+from .pricing import PricingLookup, estimate_session_cost_usd, load_pricing_lookup
 from .telemetry import TelemetrySummary
 
 
@@ -61,8 +61,4 @@ def calculate_cost_summary(
 
 
 def build_default_pricing_lookup() -> PricingLookup:
-    return PricingLookup(
-        {
-            "default": ModelPricing(input=1.0, output=3.0, cache_write=0.0, cache_read=0.0)
-        }
-    )
+    return load_pricing_lookup()

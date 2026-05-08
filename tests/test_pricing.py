@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from opencode_tokenstats.pricing import ModelPricing, PricingLookup, estimate_session_cost_usd
+from opencode_tokenstats.pricing import (
+    ModelPricing,
+    PricingLookup,
+    canonical_model_keys,
+    estimate_session_cost_usd,
+)
 
 
 def test_build_lookup_key_normalization() -> None:
@@ -41,3 +46,8 @@ def test_estimate_session_cost_uses_reasoning_and_cache_components() -> None:
         cache_write_tokens=1_000_000,
     )
     assert cost == 11.5
+
+
+def test_canonical_model_keys_match_converter_style() -> None:
+    assert canonical_model_keys("gpt-5.3-codex") == ["gpt-5.3-codex", "openai/gpt-5.3-codex", "azure/gpt-5.3-codex"]
+    assert canonical_model_keys("openai/gpt-5.3-codex") == ["openai/gpt-5.3-codex", "gpt-5.3-codex"]

@@ -91,14 +91,7 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
             }
         )
 
-    contributor_rows = [
-        {
-            "name": row["component_name"],
-            "tokens": row["tokens"],
-            "percent": round((row["tokens"] / max(sum(r["tokens"] for r in component_rows), 1) * 100.0), 2),
-        }
-        for row in component_rows
-    ]
+    contributor_rows = [{"name": row["component_name"], "tokens": row["tokens"]} for row in component_rows]
     if attribution.totals.system_tokens > 0:
         base = max(sum(r["tokens"] for r in component_rows) + attribution.totals.system_tokens, 1)
         contributor_rows.append(
@@ -108,6 +101,9 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
                 "percent": round((attribution.totals.system_tokens / base) * 100.0, 2),
             }
         )
+    contrib_total = max(sum(int(r["tokens"]) for r in contributor_rows), 1)
+    for row in contributor_rows:
+        row["percent"] = round((int(row["tokens"]) / contrib_total) * 100.0, 2)
     contributor_rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
 
     mcp_rows = _build_mcp_rows(tool_rows)
