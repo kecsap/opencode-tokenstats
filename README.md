@@ -8,6 +8,16 @@ Local-first OpenCode TokenStats CLI.
 pip install -e .[dev]
 ```
 
+## Run Locally (No Installation)
+
+```bash
+PYTHONPATH=src python -m opencode_tokenstats.cli --help
+PYTHONPATH=src python -m opencode_tokenstats.cli --mode local doctor
+PYTHONPATH=src python -m opencode_tokenstats.cli --mode api doctor
+```
+
+This runs the CLI directly from source code without installing the package.
+
 ## CLI
 
 ```bash
@@ -25,6 +35,24 @@ octoken doctor
 - `range --from-date YYYY-MM-DD --to-date YYYY-MM-DD`: explicit window aggregate
 - `json --period daily|weekly|month --format json|md`: canonical report schema output
 - `tokenizer-warmup`: preload tokenizer caches
+
+## Makefile Shortcuts
+
+```bash
+make help
+make run
+make run-api
+make doctor
+make doctor-api
+make warmup
+make test
+make build
+make install-wheel
+```
+
+Notes:
+- `make run*` and `make doctor*` run from source (`PYTHONPATH=src`), no install required.
+- `make build` creates wheel/sdist in `dist/`.
 
 ## Common Workflows
 
