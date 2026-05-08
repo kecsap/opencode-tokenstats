@@ -1,6 +1,13 @@
 """OpenCode TokenStats package."""
 
 from .client import ApiClientError, OpencodeApiClient
+from .compatibility import (
+    CompatMode,
+    CompatibilityResult,
+    ToolSchemaEstimate,
+    analyze_context_compatibility,
+    load_export_debug_session,
+)
 from .content_attribution import (
     ApproxTokenCounter,
     CategoryTotals,
@@ -25,6 +32,11 @@ from .tokenization import ResolvedModel, TokenCountResult, TokenizerRegistry, To
 __all__ = [
     "OpencodeApiClient",
     "ApiClientError",
+    "CompatMode",
+    "ToolSchemaEstimate",
+    "CompatibilityResult",
+    "analyze_context_compatibility",
+    "load_export_debug_session",
     "ApproxTokenCounter",
     "CategoryTotals",
     "ToolUsageStat",

@@ -12,6 +12,20 @@ class DummyService:
     def list_sessions(self):
         return [{"id": "a"}, {"id": "b"}]
 
+    def get_messages(self, _session_id: str):
+        return [
+            {
+                "role": "assistant",
+                "parts": [
+                    {
+                        "type": "tool",
+                        "tool": "read",
+                        "state": {"status": "completed", "input": {"file": "x"}},
+                    }
+                ],
+            }
+        ]
+
 
 class DummyClient:
     def __init__(self, *_: object, **__: object) -> None:
@@ -34,6 +48,20 @@ class DummyLocalService:
 
     def list_sessions(self):
         return [{"id": "x"}]
+
+    def get_messages(self, _session_id: str):
+        return [
+            {
+                "role": "assistant",
+                "parts": [
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"status": "completed", "input": {"command": "ls"}},
+                    }
+                ],
+            }
+        ]
 
 
 class DummyRegistry:
@@ -92,3 +120,30 @@ def test_doctor_tokenizer_check(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Tokenizer Check: exact" in result.output
     assert "kind=huggingface" in result.output
+
+
+def test_doctor_compatibility_check_local(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "LocalSessionService", DummyLocalService)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["doctor", "--compat-mode", "tokenscope_compat"])
+
+    assert result.exit_code == 0
+    assert "Compatibility Check:" in result.output
+    assert "observed_tools_only=True" in result.output
+    assert "Tool Estimate:" in result.output
+
+
+def test_doctor_compatibility_check_api(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "OpencodeApiClient", DummyClient)
+    monkeypatch.setattr(cli, "SessionService", DummyService)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.main,
+        ["--mode", "api", "doctor", "--compat-mode", "strict_api", "--compat-source", "api"],
+    )
+
+    assert result.exit_code == 0
+    assert "Compatibility Check:" in result.output
+    assert "mode=strict_api" in result.output
