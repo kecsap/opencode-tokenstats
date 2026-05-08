@@ -1,0 +1,66 @@
+{
+  "overview": {
+    "period": "daily",
+    "mode": "local",
+    "from": "2026-05-01T00:00:00+00:00",
+    "to": "2026-05-02T00:00:00+00:00",
+    "sessions": 1,
+    "api_calls": 1,
+    "tokens": 184,
+    "api_cost": 0.012
+  },
+  "tokens": {
+    "input": 120,
+    "output": 40,
+    "reasoning": 8,
+    "cache_read": 16,
+    "cache_write": 0
+  },
+  "tools": [
+    {
+      "name": "lean-ctx_ctx_search",
+      "tokens": 2,
+      "calls": 1
+    }
+  ],
+  "contributors": [
+    {
+      "name": "System (inferred from API telemetry)",
+      "tokens": 4
+    },
+    {
+      "name": "lean-ctx_ctx_search",
+      "tokens": 2
+    }
+  ],
+  "skills": [],
+  "subagents": [],
+  "context_estimates": {
+    "observed_tools_only": true,
+    "components": [
+      {
+        "component_type": "tool",
+        "component_group": "lean",
+        "component_name": "lean-ctx_ctx_search",
+        "estimated_session_tokens": 2
+      }
+    ]
+  },
+  "warnings": [],
+  "period_series": [
+    {
+      "date": "2026-05-01",
+      "sessions": 1,
+      "api_calls": 1,
+      "tokens": 184,
+      "api_cost": 0.012
+    }
+  ],
+  "projects": [],
+  "models": [
+    {
+      "model": "gpt-5.3-codex",
+      "api_cost": 0.012
+    }
+  ]
+}
