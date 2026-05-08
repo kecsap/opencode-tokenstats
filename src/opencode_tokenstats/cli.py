@@ -311,11 +311,27 @@ def weekly(ctx: click.Context) -> None:
     _print_period_report(ctx.obj, days=7, label="weekly")
 
 
-@main.command(name="month", short_help="Aggregate last 30 days")
+@main.command(
+    name="month",
+    short_help="Aggregate last 30 days or specific month",
+    epilog=(
+        "Examples:\n"
+        "  month           Last 30 days (default)\n"
+        "  month may        Stats for May of current year\n"
+        "  month 05         Same as above (numeric)\n"
+        "  month january    Full month name also accepted"
+    ),
+)
+@click.argument("month", required=False)
 @click.pass_context
-def month_cmd(ctx: click.Context) -> None:
-    """Show last 30 days aggregate."""
-    _print_period_report(ctx.obj, days=30, label="month")
+def month_cmd(ctx: click.Context, month: str | None) -> None:
+    """Show last 30 days aggregate, or stats for a specific month (name or number)."""
+    if month is None:
+        _print_period_report(ctx.obj, days=30, label="month")
+    else:
+        start, end = _month_window(month)
+        report = _build_period_report(ctx.obj, start, end)
+        _print_report("month", report)
 
 
 @main.command(short_help="Aggregate all available sessions")
@@ -568,6 +584,53 @@ def _parse_date(value: str) -> datetime:
         return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError as exc:
         raise click.ClickException(f"Invalid date '{value}', expected YYYY-MM-DD") from exc
+
+
+_MONTHS = {
+    "jan": 1, "january": 1,
+    "feb": 2, "february": 2,
+    "mar": 3, "march": 3,
+    "apr": 4, "april": 4,
+    "may": 5,
+    "jun": 6, "june": 6,
+    "jul": 7, "july": 7,
+    "aug": 8, "august": 8,
+    "sep": 9, "september": 9,
+    "oct": 10, "october": 10,
+    "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}
+
+
+def _month_window(month_arg: str) -> tuple[datetime, datetime]:
+    """Resolve a month argument to a date range for the current year."""
+    now = datetime.now(UTC)
+    year = now.year
+
+    lower = month_arg.lower().strip()
+
+    # Try numeric (01-12)
+    if lower.isdigit():
+        month_num = int(lower)
+        if month_num < 1 or month_num > 12:
+            raise click.ClickException(f"Invalid month '{month_arg}', expected 01-12 or month name")
+    else:
+        # Try name lookup
+        if lower not in _MONTHS:
+            raise click.ClickException(
+                f"Invalid month '{month_arg}', expected month name (jan-dec) or number (01-12)"
+            )
+        month_num = _MONTHS[lower]
+
+    # Build date range: first day of month to first day of next month
+    from datetime import datetime as dt
+    start = dt(year, month_num, 1, tzinfo=UTC)
+    if month_num == 12:
+        end = dt(year + 1, 1, 1, tzinfo=UTC)
+    else:
+        end = dt(year, month_num + 1, 1, tzinfo=UTC)
+
+    return start, end
 
 
 _LOCAL_TOOL_RE = re.compile(r"^(read|bash|glob|todowrite|task|tokenscope|apply_patch|skill)$")

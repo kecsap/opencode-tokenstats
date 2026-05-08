@@ -32,7 +32,7 @@ octoken health
 - `status`: source mode + session count + latest session id
 - `daily`: aggregate last 24h
 - `weekly`: aggregate last 7d
-- `month`: aggregate last 30d
+- `month [month]`: aggregate last 30d, or stats for a specific month (e.g. `month may`, `month 05`)
 - `lifetime`: aggregate all available sessions
 - `range --from-date YYYY-MM-DD --to-date YYYY-MM-DD`: explicit window aggregate (e.g. `--from-date 2026-05-01 --to-date 2026-05-07`)
 - `json --period daily|weekly|month|lifetime --format json|md`: canonical report schema output

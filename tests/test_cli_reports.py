@@ -92,3 +92,52 @@ def test_json_lifetime_period(monkeypatch) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["overview"]["period"] == "lifetime"
+
+
+def test_month_command_default(monkeypatch) -> None:
+    """month command without argument shows last 30 days."""
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["month"])
+    assert result.exit_code == 0
+    assert "Period Summary" in result.output
+    assert "month" in result.output
+
+
+def test_month_command_with_name(monkeypatch) -> None:
+    """month command with month name shows that specific month."""
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["month", "may"])
+    assert result.exit_code == 0
+    assert "Period Summary" in result.output
+    assert "month" in result.output
+
+
+def test_month_command_with_number(monkeypatch) -> None:
+    """month command with month number shows that specific month."""
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["month", "05"])
+    assert result.exit_code == 0
+    assert "Period Summary" in result.output
+    assert "month" in result.output
+
+
+def test_month_command_invalid_name(monkeypatch) -> None:
+    """month command with invalid month name fails."""
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["month", "foobar"])
+    assert result.exit_code != 0
+    assert "Invalid month" in result.output
+
+
+def test_month_command_invalid_number(monkeypatch) -> None:
+    """month command with invalid month number fails."""
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["month", "13"])
+    assert result.exit_code != 0
+    assert "Invalid month" in result.output
