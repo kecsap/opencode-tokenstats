@@ -311,17 +311,7 @@ def weekly(ctx: click.Context) -> None:
     _print_period_report(ctx.obj, days=7, label="weekly")
 
 
-@main.command(
-    name="month",
-    short_help="Aggregate last 30 days or specific month",
-    epilog=(
-        "Examples:\n"
-        "  month           Last 30 days (default)\n"
-        "  month may        Stats for May of current year\n"
-        "  month 05         Same as above (numeric)\n"
-        "  month january    Full month name also accepted"
-    ),
-)
+@main.command(name="month", short_help="Aggregate last 30 days or specific month")
 @click.argument("month", required=False)
 @click.pass_context
 def month_cmd(ctx: click.Context, month: str | None) -> None:
@@ -456,7 +446,7 @@ def _build_period_report(
     total_tokens = 0
     total_cost = 0.0
     used = 0
-    token_composition = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0, "tool_output": 0}
+    token_composition = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "tool_output": 0}
     tool_map: dict[str, dict[str, int]] = defaultdict(lambda: {"output_tokens": 0, "call_count": 0})
     mcp_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
     component_map: dict[str, float] = defaultdict(float)
@@ -718,7 +708,6 @@ def _accumulate_components(component_map: dict[str, float], summary, attribution
     component_map["output"] += float(summary.output_tokens)
     component_map["reasoning"] += float(summary.reasoning_tokens)
     component_map["cache_read"] += float(summary.cache_read_tokens)
-    component_map["cache_write"] += float(summary.cache_write_tokens)
     component_map["system"] += float(attribution.totals.system_tokens)
     component_map["user"] += float(attribution.totals.user_tokens)
     component_map["assistant"] += float(attribution.totals.assistant_tokens)

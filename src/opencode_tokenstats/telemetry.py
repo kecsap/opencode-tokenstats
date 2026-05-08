@@ -14,7 +14,6 @@ class TelemetryCall:
     output_tokens: int = 0
     reasoning_tokens: int = 0
     cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
     cost: float = 0.0
     timestamp_ms: int | None = None
 
@@ -25,7 +24,6 @@ class TelemetryCall:
             + self.output_tokens
             + self.reasoning_tokens
             + self.cache_read_tokens
-            + self.cache_write_tokens
         )
 
 
@@ -35,7 +33,6 @@ class TelemetrySummary:
     output_tokens: int = 0
     reasoning_tokens: int = 0
     cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
     total_tokens: int = 0
     api_calls: int = 0
     total_cost: float = 0.0
@@ -84,7 +81,6 @@ def summarize_telemetry(calls: list[TelemetryCall]) -> TelemetrySummary:
     output_tokens = sum(c.output_tokens for c in calls)
     reasoning_tokens = sum(c.reasoning_tokens for c in calls)
     cache_read_tokens = sum(c.cache_read_tokens for c in calls)
-    cache_write_tokens = sum(c.cache_write_tokens for c in calls)
     total_cost = sum(c.cost for c in calls)
     most_recent_call = _most_recent_call(calls)
 
@@ -93,13 +89,11 @@ def summarize_telemetry(calls: list[TelemetryCall]) -> TelemetrySummary:
         output_tokens=output_tokens,
         reasoning_tokens=reasoning_tokens,
         cache_read_tokens=cache_read_tokens,
-        cache_write_tokens=cache_write_tokens,
         total_tokens=(
             input_tokens
             + output_tokens
             + reasoning_tokens
             + cache_read_tokens
-            + cache_write_tokens
         ),
         api_calls=len(calls),
         total_cost=total_cost,
@@ -164,7 +158,6 @@ def _step_finish_calls(parts: list[dict[str, Any]]) -> list[TelemetryCall]:
                 output_tokens=_safe_int(tokens.get("output")),
                 reasoning_tokens=_safe_int(tokens.get("reasoning")),
                 cache_read_tokens=_safe_int(cache.get("read")),
-                cache_write_tokens=_safe_int(cache.get("write")),
                 cost=_safe_float(part.get("cost")),
                 timestamp_ms=_safe_optional_int(part.get("timestamp"))
                 or _safe_optional_int(part.get("time")),
@@ -203,7 +196,6 @@ def _fallback_message_call(message: dict[str, Any]) -> TelemetryCall | None:
         output_tokens=_safe_int(tokens.get("output")),
         reasoning_tokens=_safe_int(tokens.get("reasoning")),
         cache_read_tokens=_safe_int(cache.get("read")),
-        cache_write_tokens=_safe_int(cache.get("write")),
         cost=_safe_float(cost_value),
         timestamp_ms=timestamp_ms,
     )
@@ -272,7 +264,6 @@ def _merge_summaries(a: TelemetrySummary, b: TelemetrySummary) -> TelemetrySumma
         output_tokens=a.output_tokens + b.output_tokens,
         reasoning_tokens=a.reasoning_tokens + b.reasoning_tokens,
         cache_read_tokens=a.cache_read_tokens + b.cache_read_tokens,
-        cache_write_tokens=a.cache_write_tokens + b.cache_write_tokens,
         total_tokens=a.total_tokens + b.total_tokens,
         api_calls=a.api_calls + b.api_calls,
         total_cost=a.total_cost + b.total_cost,

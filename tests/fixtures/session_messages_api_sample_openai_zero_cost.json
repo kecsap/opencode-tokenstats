@@ -14,8 +14,7 @@
           "output": 30,
           "reasoning": 6,
           "cache": {
-            "read": 25,
-            "write": 0
+            "read": 25
           }
         },
         "cost": 0,

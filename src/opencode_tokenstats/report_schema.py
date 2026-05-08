@@ -34,7 +34,6 @@ def build_report_schema(
         "output": sum(m.output_tokens for m in session_metrics),
         "reasoning": sum(m.reasoning_tokens for m in session_metrics),
         "cache_read": sum(m.cache_read_tokens for m in session_metrics),
-        "cache_write": sum(m.cache_write_tokens for m in session_metrics),
     }
 
     tools: dict[str, dict[str, int]] = {}

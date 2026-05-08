@@ -13,8 +13,7 @@
     "input": 120,
     "output": 40,
     "reasoning": 8,
-    "cache_read": 16,
-    "cache_write": 0
+    "cache_read": 16
   },
   "tools": [
     {

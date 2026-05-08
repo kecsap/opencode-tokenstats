@@ -14,12 +14,11 @@ def _metric() -> CanonicalMetrics:
         output_tokens=5,
         reasoning_tokens=1,
         cache_read_tokens=2,
-        cache_write_tokens=3,
-        session_total_tokens=21,
+        session_total_tokens=19,
         api_calls=1,
         actual_cost_usd=0.01,
         estimated_cost_usd=0.02,
-        token_composition={"input": 10, "output": 5, "reasoning": 1, "cache_read": 2, "cache_write": 3, "tool_output": 4},
+        token_composition={"input": 10, "output": 5, "reasoning": 1, "cache_read": 2, "tool_output": 4},
         component_rows=[
             {
                 "component_type": "tool",

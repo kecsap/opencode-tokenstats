@@ -10,7 +10,6 @@ from pathlib import Path
 class ModelPricing:
     input: float
     output: float
-    cache_write: float
     cache_read: float
 
 
@@ -37,7 +36,7 @@ class PricingLookup:
         found = self._find_pricing(model_name)
         if found is not None:
             return found
-        return self.pricing_data.get("default", ModelPricing(input=1, output=3, cache_write=0, cache_read=0))
+        return self.pricing_data.get("default", ModelPricing(input=1, output=3, cache_read=0))
 
     def has_pricing(self, model_name: str) -> bool:
         return self._find_pricing(model_name) is not None
@@ -89,13 +88,11 @@ def estimate_session_cost_usd(
     output_tokens: int,
     reasoning_tokens: int,
     cache_read_tokens: int,
-    cache_write_tokens: int,
 ) -> float:
     input_cost = (max(0, input_tokens) / 1_000_000) * pricing.input
     output_cost = ((max(0, output_tokens) + max(0, reasoning_tokens)) / 1_000_000) * pricing.output
     cache_read_cost = (max(0, cache_read_tokens) / 1_000_000) * pricing.cache_read
-    cache_write_cost = (max(0, cache_write_tokens) / 1_000_000) * pricing.cache_write
-    return input_cost + output_cost + cache_read_cost + cache_write_cost
+    return input_cost + output_cost + cache_read_cost
 
 
 def canonical_model_keys(model: str) -> list[str]:
@@ -139,12 +136,11 @@ def load_pricing_lookup() -> PricingLookup:
                 data[key.lower()] = ModelPricing(
                     input=float(val.get("input", 0) or 0),
                     output=float(val.get("output", 0) or 0),
-                    cache_write=float(val.get("cacheWrite", val.get("cache_write", 0)) or 0),
                     cache_read=float(val.get("cacheRead", val.get("cache_read", 0)) or 0),
                 )
-            data.setdefault("default", ModelPricing(input=1.0, output=3.0, cache_write=0.0, cache_read=0.0))
+            data.setdefault("default", ModelPricing(input=1.0, output=3.0, cache_read=0.0))
             return PricingLookup(data)
         except Exception:
             continue
 
-    return PricingLookup({"default": ModelPricing(input=1.0, output=3.0, cache_write=0.0, cache_read=0.0)})
+    return PricingLookup({"default": ModelPricing(input=1.0, output=3.0, cache_read=0.0)})
