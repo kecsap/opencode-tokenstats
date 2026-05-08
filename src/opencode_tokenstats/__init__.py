@@ -1,6 +1,7 @@
 """OpenCode TokenStats package."""
 
 from .client import ApiClientError, OpencodeApiClient
+from .canonical_metrics import CanonicalMetrics, build_canonical_metrics
 from .compatibility import (
     CompatMode,
     CompatibilityResult,
@@ -32,6 +33,8 @@ from .tokenization import ResolvedModel, TokenCountResult, TokenizerRegistry, To
 __all__ = [
     "OpencodeApiClient",
     "ApiClientError",
+    "CanonicalMetrics",
+    "build_canonical_metrics",
     "CompatMode",
     "ToolSchemaEstimate",
     "CompatibilityResult",
