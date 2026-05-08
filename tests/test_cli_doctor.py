@@ -101,23 +101,23 @@ class DummyRegistry:
         ]
 
 
-def test_doctor_ok(monkeypatch) -> None:
+def test_health_ok(monkeypatch) -> None:
     monkeypatch.setattr(cli, "OpencodeApiClient", DummyClient)
     monkeypatch.setattr(cli, "SessionService", DummyService)
 
     runner = CliRunner()
-    result = runner.invoke(cli.main, ["--mode", "api", "doctor"])
+    result = runner.invoke(cli.main, ["--mode", "api", "health"])
 
     assert result.exit_code == 0
     assert "OpenCode API: OK" in result.output
     assert "list_sessions returned 2 entries" in result.output
 
 
-def test_doctor_local_default(monkeypatch) -> None:
+def test_health_local_default(monkeypatch) -> None:
     monkeypatch.setattr(cli, "LocalSessionService", DummyLocalService)
 
     runner = CliRunner()
-    result = runner.invoke(cli.main, ["doctor"])
+    result = runner.invoke(cli.main, ["health"])
 
     assert result.exit_code == 0
     assert "OpenCode Local Storage: OK" in result.output
@@ -125,23 +125,23 @@ def test_doctor_local_default(monkeypatch) -> None:
     assert "list_sessions returned 1 entries" in result.output
 
 
-def test_doctor_tokenizer_check(monkeypatch) -> None:
+def test_health_tokenizer_check(monkeypatch) -> None:
     monkeypatch.setattr(cli, "LocalSessionService", DummyLocalService)
     monkeypatch.setattr(cli, "TokenizerRegistry", DummyRegistry)
 
     runner = CliRunner()
-    result = runner.invoke(cli.main, ["doctor", "--check-tokenizer"])
+    result = runner.invoke(cli.main, ["health", "--check-tokenizer"])
 
     assert result.exit_code == 0
     assert "Tokenizer Check: exact" in result.output
     assert "kind=huggingface" in result.output
 
 
-def test_doctor_compatibility_check_local(monkeypatch) -> None:
+def test_health_compatibility_check_local(monkeypatch) -> None:
     monkeypatch.setattr(cli, "LocalSessionService", DummyLocalService)
 
     runner = CliRunner()
-    result = runner.invoke(cli.main, ["doctor", "--compat-mode", "tokenscope_compat"])
+    result = runner.invoke(cli.main, ["health", "--compat-mode", "tokenscope_compat"])
 
     assert result.exit_code == 0
     assert "Compatibility Check:" in result.output
@@ -149,14 +149,14 @@ def test_doctor_compatibility_check_local(monkeypatch) -> None:
     assert "Tool Estimate:" in result.output
 
 
-def test_doctor_compatibility_check_api(monkeypatch) -> None:
+def test_health_compatibility_check_api(monkeypatch) -> None:
     monkeypatch.setattr(cli, "OpencodeApiClient", DummyClient)
     monkeypatch.setattr(cli, "SessionService", DummyService)
 
     runner = CliRunner()
     result = runner.invoke(
         cli.main,
-        ["--mode", "api", "doctor", "--compat-mode", "strict_api", "--compat-source", "api"],
+        ["--mode", "api", "health", "--compat-mode", "strict_api", "--compat-source", "api"],
     )
 
     assert result.exit_code == 0
@@ -183,7 +183,7 @@ def test_auto_warmup_enabled_by_default(monkeypatch) -> None:
     monkeypatch.setattr(cli, "LocalSessionService", DummyLocalService)
 
     runner = CliRunner()
-    result = runner.invoke(cli.main, ["doctor"])
+    result = runner.invoke(cli.main, ["health"])
     assert result.exit_code == 0
     assert calls["n"] == 1
 
@@ -198,6 +198,6 @@ def test_auto_warmup_can_be_disabled(monkeypatch) -> None:
     monkeypatch.setattr(cli, "LocalSessionService", DummyLocalService)
 
     runner = CliRunner()
-    result = runner.invoke(cli.main, ["--no-warmup", "doctor"])
+    result = runner.invoke(cli.main, ["--no-warmup", "health"])
     assert result.exit_code == 0
     assert calls["n"] == 0

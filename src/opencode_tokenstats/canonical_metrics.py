@@ -153,12 +153,13 @@ def _detect_model(messages: list[dict[str, Any]]) -> str:
 
 
 def _component_group(name: str) -> str:
-    out = []
-    for ch in name:
-        if ch in {"_", "-"}:
-            break
-        out.append(ch)
-    return "".join(out) if out else name
+    if "_" in name:
+        head = name.split("_", 1)[0]
+        return head or name
+    if "-" in name:
+        head = name.split("-", 1)[0]
+        return head or name
+    return name
 
 
 _LOCAL_TOOL_RE = re.compile(r"^(read|bash|glob|todowrite|task|tokenscope|apply_patch|skill)$")

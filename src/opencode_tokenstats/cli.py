@@ -3,21 +3,56 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from collections import defaultdict
+from pathlib import Path
 import re
+import sys
 
 import click
 
-from .client import ApiClientError, OpencodeApiClient
-from .canonical_metrics import build_canonical_metrics
-from .compatibility import analyze_context_compatibility
-from .local_session_service import LocalSessionService, LocalStorageError
-from .renderer import print_period_report, print_session_report, print_status_report
-from .report_schema import build_report_schema, report_to_markdown
-from .session_service import SessionService
-from .tokenization import TokenizerRegistry
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from opencode_tokenstats.client import ApiClientError, OpencodeApiClient
+    from opencode_tokenstats.canonical_metrics import build_canonical_metrics
+    from opencode_tokenstats.compatibility import analyze_context_compatibility
+    from opencode_tokenstats.local_session_service import LocalSessionService, LocalStorageError
+    from opencode_tokenstats.renderer import print_period_report, print_session_report, print_status_report
+    from opencode_tokenstats.report_schema import build_report_schema, report_to_markdown
+    from opencode_tokenstats.session_service import SessionService
+    from opencode_tokenstats.tokenization import TokenizerRegistry
+else:
+    from .client import ApiClientError, OpencodeApiClient
+    from .canonical_metrics import build_canonical_metrics
+    from .compatibility import analyze_context_compatibility
+    from .local_session_service import LocalSessionService, LocalStorageError
+    from .renderer import print_period_report, print_session_report, print_status_report
+    from .report_schema import build_report_schema, report_to_markdown
+    from .session_service import SessionService
+    from .tokenization import TokenizerRegistry
+
+
+class OrderedCommandsGroup(click.Group):
+    _ORDER = [
+        "daily",
+        "weekly",
+        "month",
+        "range",
+        "lifetime",
+        "session",
+        "status",
+        "json",
+        "health",
+        "tokenizer-warmup",
+    ]
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        commands = list(self.commands)
+        rank = {name: idx for idx, name in enumerate(self._ORDER)}
+        commands.sort(key=lambda name: (rank.get(name, len(self._ORDER)), name))
+        return commands
 
 
 @click.group(
+    cls=OrderedCommandsGroup,
     context_settings={"help_option_names": ["-h", "--help"]},
     help=(
         "OpenCode TokenStats CLI. Local-first session analytics with canonical\n"
@@ -60,7 +95,7 @@ def main(
         _run_default_warmup_silent()
 
 
-@main.command(short_help="Health check + optional tokenizer/compat checks")
+@main.command(name="health", short_help="Health check + optional tokenizer/compat checks")
 @click.option("--check-tokenizer", is_flag=True, help="Check tokenizer resolution and mode")
 @click.option("--provider-id", default="local", show_default=True)
 @click.option("--model-id", default="qwen3.6-27b", show_default=True)
@@ -73,7 +108,7 @@ def main(
 @click.option("--compat-source", type=click.Choice(["auto", "local", "api"]), default="auto", show_default=True)
 @click.option("--compat-session-id", default=None)
 @click.pass_context
-def doctor(
+def health(
     ctx: click.Context,
     check_tokenizer: bool,
     provider_id: str,
@@ -283,9 +318,16 @@ def month_cmd(ctx: click.Context) -> None:
     _print_period_report(ctx.obj, days=30, label="month")
 
 
-@main.command(short_help="Aggregate explicit date window")
-@click.option("--from-date", required=True, help="YYYY-MM-DD")
-@click.option("--to-date", required=True, help="YYYY-MM-DD")
+@main.command(short_help="Aggregate all available sessions")
+@click.pass_context
+def lifetime(ctx: click.Context) -> None:
+    """Show all-time aggregate across all available sessions."""
+    _print_lifetime_report(ctx.obj)
+
+
+@main.command(short_help="Aggregate explicit date window (e.g. 2026-05-01..2026-05-07)")
+@click.option("--from-date", required=True, help="YYYY-MM-DD (e.g. 2026-05-01)")
+@click.option("--to-date", required=True, help="YYYY-MM-DD (e.g. 2026-05-07)")
 @click.pass_context
 def range(ctx: click.Context, from_date: str, to_date: str) -> None:
     """Show aggregate for explicit date range."""
@@ -298,7 +340,7 @@ def range(ctx: click.Context, from_date: str, to_date: str) -> None:
 @main.command(name="json", short_help="Emit canonical report schema")
 @click.option(
     "--period",
-    type=click.Choice(["daily", "weekly", "month"]),
+    type=click.Choice(["daily", "weekly", "month", "lifetime"]),
     default="daily",
     show_default=True,
 )
@@ -306,9 +348,12 @@ def range(ctx: click.Context, from_date: str, to_date: str) -> None:
 @click.pass_context
 def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
     """Emit aggregate report as JSON."""
-    days = {"daily": 1, "weekly": 7, "month": 30}[period]
-    end = datetime.now(UTC)
-    start = end - timedelta(days=days)
+    if period == "lifetime":
+        start, end = _lifetime_window(ctx.obj)
+    else:
+        days = {"daily": 1, "weekly": 7, "month": 30}[period]
+        end = datetime.now(UTC)
+        start = end - timedelta(days=days)
     session_metrics = _collect_period_session_metrics(ctx.obj, start, end)
     payload = build_report_schema(
         period=period,
@@ -367,6 +412,23 @@ def _print_period_report(options: dict[str, object], *, days: int, label: str) -
     start = end - timedelta(days=days)
     report = _build_period_report(options, start, end)
     _print_report(label, report)
+
+
+def _print_lifetime_report(options: dict[str, object]) -> None:
+    start, end = _lifetime_window(options)
+    report = _build_period_report(options, start, end)
+    _print_report("lifetime", report)
+
+
+def _lifetime_window(options: dict[str, object]) -> tuple[datetime, datetime]:
+    sessions = _list_sessions(options)
+    created_times = [dt for dt in (_session_created_at(s) for s in sessions) if dt is not None]
+    if created_times:
+        start = min(created_times)
+    else:
+        start = datetime.fromtimestamp(0, UTC)
+    end = datetime.now(UTC) + timedelta(seconds=1)
+    return start, end
 
 
 def _build_period_report(
@@ -703,3 +765,7 @@ def _finalize_model_costs(model_map: dict[str, float]) -> list[dict[str, object]
     rows = [{"model": model, "cost": round(cost, 6)} for model, cost in model_map.items()]
     rows.sort(key=lambda x: float(x["cost"]), reverse=True)
     return rows[:10]
+
+
+if __name__ == "__main__":
+    main()

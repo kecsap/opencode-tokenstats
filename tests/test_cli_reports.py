@@ -72,3 +72,23 @@ def test_json_command_markdown(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "## Overview" in result.output
     assert "## Top Tools" in result.output
+
+
+def test_lifetime_command(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["lifetime"])
+    assert result.exit_code == 0
+    assert "Period Summary" in result.output
+    assert "lifetime" in result.output
+
+
+def test_json_lifetime_period(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["json", "--period", "lifetime"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["overview"]["period"] == "lifetime"

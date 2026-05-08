@@ -36,7 +36,8 @@ def test_build_canonical_metrics_basic_semantics() -> None:
     assert out.input_tokens == 100
     assert len(out.tool_rows) == 1
     assert out.tool_rows[0]["tool"] == "lean-ctx_ctx_search"
-    assert out.component_rows[0]["component_group"] == "lean"
+    assert out.component_rows[0]["component_group"] == "lean-ctx"
+    assert out.mcp_rows[0]["name"] == "lean-ctx"
 
 
 def test_canonical_metrics_extracts_skill_and_subagent_components() -> None:

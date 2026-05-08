@@ -40,7 +40,7 @@
     "components": [
       {
         "component_type": "tool",
-        "component_group": "lean",
+        "component_group": "lean-ctx",
         "component_name": "lean-ctx_ctx_search",
         "estimated_session_tokens": 2
       }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 try:
@@ -12,18 +13,45 @@ except Exception:  # pragma: no cover
     RICH_AVAILABLE = False
 
 
+def _fmt_int(value: Any) -> str:
+    try:
+        return f"{int(value):,}".replace(",", " ")
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _fmt_float(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _fmt_ts_local(value: Any) -> str:
+    if not isinstance(value, str):
+        return str(value)
+    raw = value.strip()
+    if not raw:
+        return raw
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return value
+
+
 def print_status_report(mode: str, sessions: list[dict[str, object]]) -> None:
     latest = sessions[0].get("id") if sessions else "-"
     if not RICH_AVAILABLE:
         print(f"Mode: {mode}")
-        print(f"Sessions: {len(sessions)}")
+        print(f"Sessions: {_fmt_int(len(sessions))}")
         print(f"Latest Session: {latest}")
         return
 
     console = Console()
     table = Table(show_header=False, box=None)
     table.add_row("Mode", str(mode))
-    table.add_row("Sessions", str(len(sessions)))
+    table.add_row("Sessions", _fmt_int(len(sessions)))
     table.add_row("Latest Session", str(latest))
     console.print(Panel(table, title="Status", border_style="cyan"))
 
@@ -43,9 +71,9 @@ def print_session_report(
 ) -> None:
     if not RICH_AVAILABLE:
         print(f"Session: {session_id}")
-        print(f"API calls: {api_calls}")
-        print(f"Tokens: {tokens}")
-        print(f"Cost (API): {api_cost:.6f}")
+        print(f"API calls: {_fmt_int(api_calls)}")
+        print(f"Tokens: {_fmt_int(tokens)}")
+        print(f"Cost (API): {_fmt_float(api_cost)}")
         if token_composition:
             print(f"Token Composition: {token_composition}")
         if top_tools:
@@ -63,9 +91,9 @@ def print_session_report(
     console = Console()
     table = Table(show_header=False, box=None)
     table.add_row("Session", session_id)
-    table.add_row("API calls", str(api_calls))
-    table.add_row("Tokens", str(tokens))
-    table.add_row("Cost (API)", f"{api_cost:.6f}")
+    table.add_row("API calls", _fmt_int(api_calls))
+    table.add_row("Tokens", _fmt_int(tokens))
+    table.add_row("Cost (API)", _fmt_float(api_cost))
     console.print(Panel(table, title="Session", border_style="green"))
 
     if token_composition:
@@ -73,7 +101,7 @@ def print_session_report(
         comp.add_column("Component")
         comp.add_column("Tokens", justify="right")
         for key, value in token_composition.items():
-            comp.add_row(key, str(value))
+            comp.add_row(key, _fmt_int(value))
         console.print(Panel(comp, title="Token Composition", border_style="blue"))
 
     if top_tools:
@@ -82,7 +110,7 @@ def print_session_report(
         tt.add_column("Output Tokens", justify="right")
         tt.add_column("Calls", justify="right")
         for item in top_tools:
-            tt.add_row(str(item["name"]), str(item["output_tokens"]), str(item["call_count"]))
+            tt.add_row(str(item["name"]), _fmt_int(item["output_tokens"]), _fmt_int(item["call_count"]))
         console.print(Panel(tt, title="Top Tools", border_style="yellow"))
 
     if model_costs:
@@ -90,7 +118,7 @@ def print_session_report(
         mt.add_column("Model")
         mt.add_column("Cost (API)", justify="right")
         for item in model_costs:
-            mt.add_row(str(item.get("model")), str(item.get("cost")))
+            mt.add_row(str(item.get("model")), _fmt_float(item.get("cost")))
         console.print(Panel(mt, title="Model Costs", border_style="green"))
 
     if mcp_stats and mcp_stats.get("rows"):
@@ -103,10 +131,10 @@ def print_session_report(
         for row in mcp_stats["rows"]:
             mcp.add_row(
                 str(row.get("name")),
-                str(row.get("tokens")),
-                str(row.get("calls")),
-                str(row.get("tokens_per_call")),
-                str(row.get("percent")),
+                _fmt_int(row.get("tokens")),
+                _fmt_int(row.get("calls")),
+                _fmt_float(row.get("tokens_per_call")),
+                _fmt_float(row.get("percent")),
             )
         console.print(Panel(mcp, title="MCP Insights", border_style="cyan"))
 
@@ -124,10 +152,10 @@ def print_session_report(
                 str(row.get("component_type")),
                 str(row.get("component_group")),
                 str(row.get("component_name")),
-                str(row.get("tokens")),
-                str(row.get("estimated_session_tokens")),
-                str(row.get("calls", 0)),
-                str(row.get("percent")),
+                _fmt_int(row.get("tokens")),
+                _fmt_int(row.get("estimated_session_tokens")),
+                _fmt_int(row.get("calls", 0)),
+                _fmt_float(row.get("percent")),
             )
         console.print(Panel(ct, title="Component Contribution", border_style="magenta"))
 
@@ -137,17 +165,19 @@ def print_session_report(
         cc.add_column("Tokens", justify="right")
         cc.add_column("%", justify="right")
         for row in contributor_stats["rows"]:
-            cc.add_row(str(row.get("name")), str(row.get("tokens")), str(row.get("percent")))
+            cc.add_row(str(row.get("name")), _fmt_int(row.get("tokens")), _fmt_float(row.get("percent")))
         console.print(Panel(cc, title="Top Contributors", border_style="bright_blue"))
 
 
 def print_period_report(label: str, report: dict[str, Any]) -> None:
     if not RICH_AVAILABLE:
         print(f"Period: {label}")
-        print(f"Sessions: {report['sessions']}")
-        print(f"API calls: {report['api_calls']}")
-        print(f"Tokens: {report['tokens']}")
-        print(f"Cost (API): {report['api_cost']}")
+        print(f"Sessions: {_fmt_int(report['sessions'])}")
+        print(f"API calls: {_fmt_int(report['api_calls'])}")
+        print(f"Tokens: {_fmt_int(report['tokens'])}")
+        print(f"Cost (API): {_fmt_float(report['api_cost'])}")
+        print(f"From: {_fmt_ts_local(report.get('from'))}")
+        print(f"To: {_fmt_ts_local(report.get('to'))}")
         if report.get("token_composition"):
             print(f"Token Composition: {report['token_composition']}")
         if report.get("top_tools"):
@@ -165,12 +195,12 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     console = Console()
     table = Table(show_header=False, box=None)
     table.add_row("Window", label)
-    table.add_row("Sessions", str(report["sessions"]))
-    table.add_row("API calls", str(report["api_calls"]))
-    table.add_row("Tokens", str(report["tokens"]))
-    table.add_row("Cost (API)", str(report["api_cost"]))
-    table.add_row("From", str(report["from"]))
-    table.add_row("To", str(report["to"]))
+    table.add_row("Sessions", _fmt_int(report["sessions"]))
+    table.add_row("API calls", _fmt_int(report["api_calls"]))
+    table.add_row("Tokens", _fmt_int(report["tokens"]))
+    table.add_row("Cost (API)", _fmt_float(report["api_cost"]))
+    table.add_row("From", _fmt_ts_local(report["from"]))
+    table.add_row("To", _fmt_ts_local(report["to"]))
     console.print(Panel(table, title="Period Summary", border_style="magenta"))
 
     token_composition = report.get("token_composition")
@@ -179,7 +209,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         comp.add_column("Component")
         comp.add_column("Tokens", justify="right")
         for key, value in token_composition.items():
-            comp.add_row(str(key), str(value))
+            comp.add_row(str(key), _fmt_int(value))
         console.print(Panel(comp, title="Token Composition", border_style="blue"))
 
     top_tools = report.get("top_tools")
@@ -189,7 +219,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         tt.add_column("Output Tokens", justify="right")
         tt.add_column("Calls", justify="right")
         for item in top_tools:
-            tt.add_row(str(item.get("name")), str(item.get("output_tokens")), str(item.get("call_count")))
+            tt.add_row(str(item.get("name")), _fmt_int(item.get("output_tokens")), _fmt_int(item.get("call_count")))
         console.print(Panel(tt, title="Top Tools", border_style="yellow"))
 
     model_costs = report.get("model_costs")
@@ -198,7 +228,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         mt.add_column("Model")
         mt.add_column("Cost (API)", justify="right")
         for item in model_costs:
-            mt.add_row(str(item.get("model")), str(item.get("cost")))
+            mt.add_row(str(item.get("model")), _fmt_float(item.get("cost")))
         console.print(Panel(mt, title="Model Costs", border_style="green"))
 
     mcp_stats = report.get("mcp_stats")
@@ -212,10 +242,10 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         for row in mcp_stats["rows"]:
             mcp.add_row(
                 str(row.get("name")),
-                str(row.get("tokens")),
-                str(row.get("calls")),
-                str(row.get("tokens_per_call")),
-                str(row.get("percent")),
+                _fmt_int(row.get("tokens")),
+                _fmt_int(row.get("calls")),
+                _fmt_float(row.get("tokens_per_call")),
+                _fmt_float(row.get("percent")),
             )
         console.print(Panel(mcp, title="MCP Insights", border_style="cyan"))
 
@@ -234,10 +264,10 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 str(row.get("component_type")),
                 str(row.get("component_group")),
                 str(row.get("component_name")),
-                str(row.get("tokens")),
-                str(row.get("estimated_session_tokens")),
-                str(row.get("calls", 0)),
-                str(row.get("percent")),
+                _fmt_int(row.get("tokens")),
+                _fmt_int(row.get("estimated_session_tokens")),
+                _fmt_int(row.get("calls", 0)),
+                _fmt_float(row.get("percent")),
             )
         console.print(Panel(ct, title="Component Contribution", border_style="magenta"))
 
@@ -248,5 +278,5 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         cc.add_column("Tokens", justify="right")
         cc.add_column("%", justify="right")
         for row in contributor_stats["rows"]:
-            cc.add_row(str(row.get("name")), str(row.get("tokens")), str(row.get("percent")))
+            cc.add_row(str(row.get("name")), _fmt_int(row.get("tokens")), _fmt_float(row.get("percent")))
         console.print(Panel(cc, title="Top Contributors", border_style="bright_blue"))
