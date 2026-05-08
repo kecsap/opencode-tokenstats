@@ -85,6 +85,21 @@ class DummyRegistry:
     def count(self, _text: str, _spec):
         return DummyRegistry.Result()
 
+    def warmup(self, _pairs, sample_text="warmup"):
+        class R:
+            def __init__(self, provider_id, model_id, kind, value, status, warning=None):
+                self.provider_id = provider_id
+                self.model_id = model_id
+                self.tokenizer_kind = kind
+                self.tokenizer_value = value
+                self.status = status
+                self.warning = warning
+
+        return [
+            R("openai", "gpt-5.3-codex", "tiktoken", "gpt-4o", "warmed"),
+            R("local", "qwen3.6-27b", "huggingface", "Qwen/Qwen3-32B", "approximate", "fallback"),
+        ]
+
 
 def test_doctor_ok(monkeypatch) -> None:
     monkeypatch.setattr(cli, "OpencodeApiClient", DummyClient)
@@ -147,3 +162,42 @@ def test_doctor_compatibility_check_api(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Compatibility Check:" in result.output
     assert "mode=strict_api" in result.output
+
+
+def test_tokenizer_warmup_command(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "TokenizerRegistry", DummyRegistry)
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["tokenizer-warmup", "--pair", "openai:gpt-5.3-codex"])
+    assert result.exit_code == 0
+    assert "Tokenizer warmup:" in result.output
+    assert "status=warmed" in result.output
+
+
+def test_auto_warmup_enabled_by_default(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    def fake_warmup():
+        calls["n"] += 1
+
+    monkeypatch.setattr(cli, "_run_default_warmup_silent", fake_warmup)
+    monkeypatch.setattr(cli, "LocalSessionService", DummyLocalService)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["doctor"])
+    assert result.exit_code == 0
+    assert calls["n"] == 1
+
+
+def test_auto_warmup_can_be_disabled(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    def fake_warmup():
+        calls["n"] += 1
+
+    monkeypatch.setattr(cli, "_run_default_warmup_silent", fake_warmup)
+    monkeypatch.setattr(cli, "LocalSessionService", DummyLocalService)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["--no-warmup", "doctor"])
+    assert result.exit_code == 0
+    assert calls["n"] == 0

@@ -27,6 +27,7 @@ from .tokenization import TokenizerRegistry
 @click.option("--retries", default=2, show_default=True, type=int)
 @click.option("--mode", type=click.Choice(["local", "api"]), default="local", show_default=True)
 @click.option("--db-path", default=None)
+@click.option("--no-warmup", is_flag=True, help="Disable automatic tokenizer warmup")
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -37,6 +38,7 @@ def main(
     retries: int,
     mode: str,
     db_path: str | None,
+    no_warmup: bool,
 ) -> None:
     """OpenCode TokenStats CLI."""
     ctx.obj = {
@@ -47,7 +49,11 @@ def main(
         "retries": retries,
         "mode": mode,
         "db_path": db_path,
+        "no_warmup": no_warmup,
     }
+
+    if not no_warmup and ctx.invoked_subcommand != "tokenizer-warmup":
+        _run_default_warmup_silent()
 
 
 @main.command()
@@ -140,6 +146,66 @@ def _print_tokenizer_check(provider_id: str, model_id: str, sample_text: str) ->
     )
     if result.warning:
         click.echo(f"Tokenizer Warning: {result.warning}")
+
+
+@main.command(name="tokenizer-warmup")
+@click.option(
+    "--pair",
+    "pairs",
+    multiple=True,
+    help="provider:model pair, repeatable (e.g. openai:gpt-5.3-codex)",
+)
+@click.option("--sample-text", default="warmup", show_default=True)
+def tokenizer_warmup(pairs: tuple[str, ...], sample_text: str) -> None:
+    """Warm tokenizer cache for selected models."""
+    registry = TokenizerRegistry()
+    parsed: list[tuple[str, str]] = []
+
+    if pairs:
+        for pair in pairs:
+            if ":" not in pair:
+                raise click.ClickException(f"Invalid --pair '{pair}', expected provider:model")
+            provider, model = pair.split(":", 1)
+            provider = provider.strip()
+            model = model.strip()
+            if not provider or not model:
+                raise click.ClickException(f"Invalid --pair '{pair}', expected provider:model")
+            parsed.append((provider, model))
+    else:
+        parsed = [
+            ("local", "qwen3.6-27b"),
+            ("openai", "gpt-5.3-codex"),
+            ("anthropic", "claude-sonnet-4"),
+        ]
+
+    results = registry.warmup(parsed, sample_text=sample_text)
+    warmed = sum(1 for r in results if r.status == "warmed")
+    approx = sum(1 for r in results if r.status == "approximate")
+    failed = sum(1 for r in results if r.status == "failed")
+
+    click.echo(f"Tokenizer warmup: warmed={warmed} approximate={approx} failed={failed}")
+    for r in results:
+        click.echo(
+            f"- {r.provider_id}:{r.model_id} kind={r.tokenizer_kind} value={r.tokenizer_value} status={r.status}"
+        )
+        if r.warning:
+            click.echo(f"  warning: {r.warning}")
+
+
+def _run_default_warmup_silent() -> None:
+    try:
+        registry = TokenizerRegistry()
+        registry.warmup(
+            [
+                ("local", "qwen3.6-27b"),
+                ("openai", "gpt-5.3-codex"),
+                ("anthropic", "claude-sonnet-4"),
+            ],
+            sample_text="warmup",
+        )
+    except Exception:
+        # Best-effort optimization only; never block CLI commands.
+        return
 
 
 @main.command()

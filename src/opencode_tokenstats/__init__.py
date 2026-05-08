@@ -29,7 +29,7 @@ from .telemetry import (
     summarize_session_with_subagents,
     summarize_telemetry,
 )
-from .tokenization import ResolvedModel, TokenCountResult, TokenizerRegistry, TokenizerSpec
+from .tokenization import ResolvedModel, TokenCountResult, TokenizerRegistry, TokenizerSpec, WarmupResult
 
 __all__ = [
     "OpencodeApiClient",
@@ -50,6 +50,7 @@ __all__ = [
     "TokenizerSpec",
     "TokenCountResult",
     "ResolvedModel",
+    "WarmupResult",
     "TokenizerRegistry",
     "ModelPricing",
     "PricingLookup",

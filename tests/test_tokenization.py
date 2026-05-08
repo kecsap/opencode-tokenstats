@@ -110,3 +110,29 @@ def test_huggingface_falls_back_to_transformers_tokenizer(monkeypatch) -> None:
     result = registry.count("hello", TokenizerSpec(kind="huggingface", value="Qwen/Qwen3-32B"))
     assert result.tokens == 4
     assert result.approximate is False
+
+
+def test_warmup_reports_statuses(monkeypatch) -> None:
+    registry = TokenizerRegistry()
+
+    def fake_resolve(provider_id: str, model_id: str):
+        from opencode_tokenstats.tokenization import ResolvedModel, TokenizerSpec
+
+        if model_id == "a":
+            return ResolvedModel(provider_id, model_id, TokenizerSpec("approx", None))
+        if model_id == "b":
+            return ResolvedModel(provider_id, model_id, TokenizerSpec("tiktoken", "gpt-4o"))
+        return ResolvedModel(provider_id, model_id, TokenizerSpec("huggingface", "X"))
+
+    def fake_count(_text: str, spec):
+        from opencode_tokenstats.tokenization import TokenCountResult
+
+        if spec.kind == "tiktoken":
+            return TokenCountResult(tokens=1, approximate=False)
+        return TokenCountResult(tokens=1, approximate=True, warning="fallback")
+
+    monkeypatch.setattr(registry, "resolve_model", fake_resolve)
+    monkeypatch.setattr(registry, "count", fake_count)
+
+    results = registry.warmup([("p", "a"), ("p", "b"), ("p", "c")])
+    assert [r.status for r in results] == ["approximate", "warmed", "approximate"]

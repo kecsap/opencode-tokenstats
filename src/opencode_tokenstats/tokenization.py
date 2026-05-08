@@ -85,6 +85,16 @@ class ResolvedModel:
     tokenizer: TokenizerSpec
 
 
+@dataclass(frozen=True, slots=True)
+class WarmupResult:
+    provider_id: str
+    model_id: str
+    tokenizer_kind: str
+    tokenizer_value: str | None
+    status: str  # warmed | approximate | failed
+    warning: str | None = None
+
+
 class TokenizerRegistry:
     def __init__(self) -> None:
         self._tiktoken_encoders: dict[str, Any] = {}
@@ -123,6 +133,49 @@ class TokenizerRegistry:
             )
 
         return TokenCountResult(tokens=_approximate_count(text), approximate=True, warning="approximate tokenizer fallback")
+
+    def warmup(self, model_pairs: list[tuple[str, str]], sample_text: str = "warmup") -> list[WarmupResult]:
+        results: list[WarmupResult] = []
+        for provider_id, model_id in model_pairs:
+            resolved = self.resolve_model(provider_id, model_id)
+            if resolved.tokenizer.kind == "approx":
+                results.append(
+                    WarmupResult(
+                        provider_id=resolved.provider_id,
+                        model_id=resolved.model_id,
+                        tokenizer_kind=resolved.tokenizer.kind,
+                        tokenizer_value=resolved.tokenizer.value,
+                        status="approximate",
+                        warning="no exact tokenizer mapping, approximate mode",
+                    )
+                )
+                continue
+
+            try:
+                count_result = self.count(sample_text, resolved.tokenizer)
+                status = "approximate" if count_result.approximate else "warmed"
+                results.append(
+                    WarmupResult(
+                        provider_id=resolved.provider_id,
+                        model_id=resolved.model_id,
+                        tokenizer_kind=resolved.tokenizer.kind,
+                        tokenizer_value=resolved.tokenizer.value,
+                        status=status,
+                        warning=count_result.warning,
+                    )
+                )
+            except Exception as exc:
+                results.append(
+                    WarmupResult(
+                        provider_id=resolved.provider_id,
+                        model_id=resolved.model_id,
+                        tokenizer_kind=resolved.tokenizer.kind,
+                        tokenizer_value=resolved.tokenizer.value,
+                        status="failed",
+                        warning=str(exc),
+                    )
+                )
+        return results
 
     def _count_tiktoken(self, text: str, model: str) -> TokenCountResult:
         try:
