@@ -9,17 +9,21 @@ import click
 
 from .client import ApiClientError, OpencodeApiClient
 from .canonical_metrics import build_canonical_metrics
-from .compatibility import CompatMode, analyze_context_compatibility
-from .content_attribution import collect_content_attribution
+from .compatibility import analyze_context_compatibility
 from .local_session_service import LocalSessionService, LocalStorageError
 from .renderer import print_period_report, print_session_report, print_status_report
 from .report_schema import build_report_schema, report_to_markdown
 from .session_service import SessionService
-from .telemetry import collect_telemetry_calls, summarize_telemetry
 from .tokenization import TokenizerRegistry
 
 
-@click.group()
+@click.group(
+    context_settings={"help_option_names": ["-h", "--help"]},
+    help=(
+        "OpenCode TokenStats CLI. Local-first session analytics with canonical\n"
+        "TokenScope-compatible metrics, Rich console panels, and JSON/Markdown outputs."
+    ),
+)
 @click.option("--base-url", default="http://127.0.0.1:4096", show_default=True)
 @click.option("--username", default=None)
 @click.option("--password", default=None)
@@ -56,7 +60,7 @@ def main(
         _run_default_warmup_silent()
 
 
-@main.command()
+@main.command(short_help="Health check + optional tokenizer/compat checks")
 @click.option("--check-tokenizer", is_flag=True, help="Check tokenizer resolution and mode")
 @click.option("--provider-id", default="local", show_default=True)
 @click.option("--model-id", default="qwen3.6-27b", show_default=True)
@@ -148,7 +152,7 @@ def _print_tokenizer_check(provider_id: str, model_id: str, sample_text: str) ->
         click.echo(f"Tokenizer Warning: {result.warning}")
 
 
-@main.command(name="tokenizer-warmup")
+@main.command(name="tokenizer-warmup", short_help="Preload tokenizer caches")
 @click.option(
     "--pair",
     "pairs",
@@ -208,7 +212,7 @@ def _run_default_warmup_silent() -> None:
         return
 
 
-@main.command()
+@main.command(short_help="Show one session summary")
 @click.option("--session-id", default=None)
 @click.pass_context
 def session(ctx: click.Context, session_id: str | None) -> None:
@@ -249,7 +253,7 @@ def session(ctx: click.Context, session_id: str | None) -> None:
     )
 
 
-@main.command()
+@main.command(short_help="Show source/session status")
 @click.pass_context
 def status(ctx: click.Context) -> None:
     """Show quick status for current data source."""
@@ -258,28 +262,28 @@ def status(ctx: click.Context) -> None:
     print_status_report(str(options["mode"]), sessions)
 
 
-@main.command()
+@main.command(short_help="Aggregate last 24 hours")
 @click.pass_context
 def daily(ctx: click.Context) -> None:
     """Show last 1 day aggregate."""
     _print_period_report(ctx.obj, days=1, label="daily")
 
 
-@main.command()
+@main.command(short_help="Aggregate last 7 days")
 @click.pass_context
 def weekly(ctx: click.Context) -> None:
     """Show last 7 days aggregate."""
     _print_period_report(ctx.obj, days=7, label="weekly")
 
 
-@main.command(name="month")
+@main.command(name="month", short_help="Aggregate last 30 days")
 @click.pass_context
 def month_cmd(ctx: click.Context) -> None:
     """Show last 30 days aggregate."""
     _print_period_report(ctx.obj, days=30, label="month")
 
 
-@main.command()
+@main.command(short_help="Aggregate explicit date window")
 @click.option("--from-date", required=True, help="YYYY-MM-DD")
 @click.option("--to-date", required=True, help="YYYY-MM-DD")
 @click.pass_context
@@ -291,7 +295,7 @@ def range(ctx: click.Context, from_date: str, to_date: str) -> None:
     _print_report("range", report)
 
 
-@main.command(name="json")
+@main.command(name="json", short_help="Emit canonical report schema")
 @click.option(
     "--period",
     type=click.Choice(["daily", "weekly", "month"]),

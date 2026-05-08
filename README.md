@@ -14,6 +14,37 @@ pip install -e .[dev]
 octoken doctor
 ```
 
+## Command Reference
+
+- `doctor`: checks data source health; optional tokenizer and compatibility diagnostics
+- `session`: show canonical summary for one session
+- `status`: source mode + session count + latest session id
+- `daily`: aggregate last 24h
+- `weekly`: aggregate last 7d
+- `month`: aggregate last 30d
+- `range --from-date YYYY-MM-DD --to-date YYYY-MM-DD`: explicit window aggregate
+- `json --period daily|weekly|month --format json|md`: canonical report schema output
+- `tokenizer-warmup`: preload tokenizer caches
+
+## Common Workflows
+
+```bash
+# Local default status + quick session aggregate
+octoken status
+octoken daily
+
+# API mode
+octoken --mode api status
+octoken --mode api weekly
+
+# One specific session
+octoken session --session-id <session-id>
+
+# Canonical machine output
+octoken json --period month --format json
+octoken json --period daily --format md
+```
+
 ## Tokenizer Check Examples
 
 ```bash
@@ -36,4 +67,20 @@ octoken doctor --compat-mode tokenscope_compat
 
 # Run compatibility check for an explicit session id
 octoken doctor --compat-mode tokenscope_compat --compat-session-id <session-id>
+```
+
+## Warmup Behavior
+
+- Tokenizer warmup is enabled by default for normal commands.
+- Disable with `--no-warmup` when needed.
+
+```bash
+# Default (auto warmup on)
+octoken daily
+
+# Disable warmup for this run
+octoken --no-warmup daily
+
+# Explicit preload command
+octoken tokenizer-warmup --pair local:qwen3.6-27b --pair openai:gpt-5.3-codex
 ```
