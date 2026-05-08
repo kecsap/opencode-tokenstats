@@ -1,0 +1,31 @@
+{
+  "ignoreDirs": ["node_modules", ".git", "__pycache__", ".codegraph", ".jcodemunch-index", ".opencode", ".playwright-mcp", ".ruff_cache"],
+  "mcp": {
+    "disabledTools": [
+      "audit",
+      "batch_query",
+      "brief",
+      "communities",
+      "complexity",
+      "context",
+      "execution_flow",
+      "export_graph",
+      "file_deps",
+      "file_exports",
+      "find_cycles",
+      "fn_impact",
+      "impact_analysis",
+      "implementations",
+      "interfaces",
+      "list_functions",
+      "module_map",
+      "query",
+      "semantic_search",
+      "sequence",
+      "structure",
+      "symbol_children",
+      "triage",
+      "where"
+    ]
+  }
+}
