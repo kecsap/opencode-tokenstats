@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .tokenization import ResolvedModel, TokenCountResult, TokenizerRegistry
+
 
 class TokenCounter(Protocol):
     def count(self, text: str) -> int: ...
@@ -40,6 +42,8 @@ class ContentAttribution:
     tool_usage: list[ToolUsageStat] = field(default_factory=list)
     observed_tools_only: bool = True
     tool_schema_context_estimate_tokens: int = 0
+    approximate_tokenizer_used: bool = False
+    warnings: list[str] = field(default_factory=list)
 
 
 class ApproxTokenCounter:
@@ -103,6 +107,43 @@ def collect_content_attribution(
         observed_tools_only=True,
         tool_schema_context_estimate_tokens=0,
     )
+
+
+def collect_content_attribution_for_model(
+    messages: list[dict[str, Any]],
+    *,
+    provider_id: str | None,
+    model_id: str | None,
+    tokenizer_registry: TokenizerRegistry | None = None,
+) -> ContentAttribution:
+    registry = tokenizer_registry or TokenizerRegistry()
+    resolved_model = registry.resolve_model(provider_id, model_id)
+    counter = _RegistryCounter(registry, resolved_model)
+    result = collect_content_attribution(messages, token_counter=counter)
+    return ContentAttribution(
+        totals=result.totals,
+        tool_usage=result.tool_usage,
+        observed_tools_only=result.observed_tools_only,
+        tool_schema_context_estimate_tokens=result.tool_schema_context_estimate_tokens,
+        approximate_tokenizer_used=counter.approximate_used,
+        warnings=counter.warnings,
+    )
+
+
+class _RegistryCounter:
+    def __init__(self, registry: TokenizerRegistry, model: ResolvedModel) -> None:
+        self._registry = registry
+        self._model = model
+        self.approximate_used = False
+        self.warnings: list[str] = []
+
+    def count(self, text: str) -> int:
+        result: TokenCountResult = self._registry.count(text, self._model.tokenizer)
+        if result.approximate:
+            self.approximate_used = True
+        if result.warning and result.warning not in self.warnings:
+            self.warnings.append(result.warning)
+        return result.tokens
 
 
 def _parts_from_message(message: dict[str, Any]) -> list[dict[str, Any]]:

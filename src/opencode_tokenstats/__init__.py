@@ -7,7 +7,10 @@ from .content_attribution import (
     ContentAttribution,
     ToolUsageStat,
     collect_content_attribution,
+    collect_content_attribution_for_model,
 )
+from .pricing import ModelPricing, PricingLookup, estimate_session_cost_usd
+from .cost import CostSummary, build_default_pricing_lookup, calculate_cost_summary
 from .telemetry import (
     SessionTelemetryReport,
     TelemetrySchemaError,
@@ -17,6 +20,7 @@ from .telemetry import (
     summarize_session_with_subagents,
     summarize_telemetry,
 )
+from .tokenization import ResolvedModel, TokenCountResult, TokenizerRegistry, TokenizerSpec
 
 __all__ = [
     "OpencodeApiClient",
@@ -26,6 +30,17 @@ __all__ = [
     "ToolUsageStat",
     "ContentAttribution",
     "collect_content_attribution",
+    "collect_content_attribution_for_model",
+    "TokenizerSpec",
+    "TokenCountResult",
+    "ResolvedModel",
+    "TokenizerRegistry",
+    "ModelPricing",
+    "PricingLookup",
+    "estimate_session_cost_usd",
+    "CostSummary",
+    "calculate_cost_summary",
+    "build_default_pricing_lookup",
     "TelemetryCall",
     "TelemetrySummary",
     "SessionTelemetryReport",

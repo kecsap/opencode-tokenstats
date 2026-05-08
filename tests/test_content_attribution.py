@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from opencode_tokenstats.content_attribution import collect_content_attribution
+from opencode_tokenstats.content_attribution import collect_content_attribution, collect_content_attribution_for_model
 
 
 class FakeCounter:
@@ -86,3 +86,22 @@ def test_ignores_non_assistant_non_user_text_but_counts_system_if_present() -> N
     assert result.totals.system_tokens == len("PROMPT")
     assert result.totals.user_tokens == 0
     assert result.totals.assistant_tokens == 0
+
+
+def test_model_based_attribution_exposes_approximate_warning() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "parts": [{"type": "text", "text": "abcd"}],
+        }
+    ]
+
+    result = collect_content_attribution_for_model(
+        messages,
+        provider_id="unknown-provider",
+        model_id="unknown-model",
+    )
+
+    assert result.totals.assistant_tokens == 1
+    assert result.approximate_tokenizer_used is True
+    assert any("approximate" in w for w in result.warnings)

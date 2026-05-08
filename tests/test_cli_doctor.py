@@ -36,6 +36,28 @@ class DummyLocalService:
         return [{"id": "x"}]
 
 
+class DummyRegistry:
+    class Resolved:
+        provider_id = "local"
+        model_id = "qwen3.6-27b"
+
+        class Tok:
+            kind = "huggingface"
+            value = "Qwen/Qwen3-32B"
+
+        tokenizer = Tok()
+
+    class Result:
+        approximate = False
+        warning = None
+
+    def resolve_model(self, _provider_id: str, _model_id: str):
+        return DummyRegistry.Resolved()
+
+    def count(self, _text: str, _spec):
+        return DummyRegistry.Result()
+
+
 def test_doctor_ok(monkeypatch) -> None:
     monkeypatch.setattr(cli, "OpencodeApiClient", DummyClient)
     monkeypatch.setattr(cli, "SessionService", DummyService)
@@ -58,3 +80,15 @@ def test_doctor_local_default(monkeypatch) -> None:
     assert "OpenCode Local Storage: OK" in result.output
     assert "SQLite DB: /tmp/opencode.db" in result.output
     assert "list_sessions returned 1 entries" in result.output
+
+
+def test_doctor_tokenizer_check(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "LocalSessionService", DummyLocalService)
+    monkeypatch.setattr(cli, "TokenizerRegistry", DummyRegistry)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["doctor", "--check-tokenizer"])
+
+    assert result.exit_code == 0
+    assert "Tokenizer Check: exact" in result.output
+    assert "kind=huggingface" in result.output

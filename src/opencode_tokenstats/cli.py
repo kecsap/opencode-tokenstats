@@ -5,6 +5,7 @@ import click
 from .client import ApiClientError, OpencodeApiClient
 from .local_session_service import LocalSessionService, LocalStorageError
 from .session_service import SessionService
+from .tokenization import TokenizerRegistry
 
 
 @click.group()
@@ -39,8 +40,18 @@ def main(
 
 
 @main.command()
+@click.option("--check-tokenizer", is_flag=True, help="Check tokenizer resolution and mode")
+@click.option("--provider-id", default="local", show_default=True)
+@click.option("--model-id", default="qwen3.6-27b", show_default=True)
+@click.option("--sample-text", default="hello world", show_default=True)
 @click.pass_context
-def doctor(ctx: click.Context) -> None:
+def doctor(
+    ctx: click.Context,
+    check_tokenizer: bool,
+    provider_id: str,
+    model_id: str,
+    sample_text: str,
+) -> None:
     """Check local OpenCode storage or API session endpoints."""
     options = ctx.obj
     if options["mode"] == "local":
@@ -51,6 +62,8 @@ def doctor(ctx: click.Context) -> None:
             click.echo("OpenCode Local Storage: OK")
             click.echo(f"SQLite DB: {db_path}")
             click.echo(f"Session DB: OK (list_sessions returned {len(sessions)} entries)")
+            if check_tokenizer:
+                _print_tokenizer_check(provider_id, model_id, sample_text)
             return
         except LocalStorageError as exc:
             raise click.ClickException(str(exc)) from exc
@@ -67,5 +80,20 @@ def doctor(ctx: click.Context) -> None:
             sessions = service.list_sessions()
             click.echo("OpenCode API: OK")
             click.echo(f"Session API: OK (list_sessions returned {len(sessions)} entries)")
+            if check_tokenizer:
+                _print_tokenizer_check(provider_id, model_id, sample_text)
     except ApiClientError as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+def _print_tokenizer_check(provider_id: str, model_id: str, sample_text: str) -> None:
+    registry = TokenizerRegistry()
+    resolved = registry.resolve_model(provider_id, model_id)
+    result = registry.count(sample_text, resolved.tokenizer)
+    mode = "approximate" if result.approximate else "exact"
+    click.echo(
+        f"Tokenizer Check: {mode} (provider={resolved.provider_id}, model={resolved.model_id}, "
+        f"kind={resolved.tokenizer.kind}, value={resolved.tokenizer.value})"
+    )
+    if result.warning:
+        click.echo(f"Tokenizer Warning: {result.warning}")
