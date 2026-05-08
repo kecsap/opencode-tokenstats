@@ -109,10 +109,9 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
 
     token_composition = {
         "input": telemetry.input_tokens,
+        "cache_read": telemetry.cache_read_tokens,
         "output": telemetry.output_tokens,
         "reasoning": telemetry.reasoning_tokens,
-        "cache_read": telemetry.cache_read_tokens,
-        "tool_output": attribution.totals.tool_output_tokens,
     }
 
     return CanonicalMetrics(

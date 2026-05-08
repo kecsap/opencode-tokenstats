@@ -446,7 +446,7 @@ def _build_period_report(
     total_tokens = 0
     total_cost = 0.0
     used = 0
-    token_composition = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "tool_output": 0}
+    token_composition = {"input": 0, "cache_read": 0, "output": 0, "reasoning": 0}
     tool_map: dict[str, dict[str, int]] = defaultdict(lambda: {"output_tokens": 0, "call_count": 0})
     mcp_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
     component_map: dict[str, float] = defaultdict(float)

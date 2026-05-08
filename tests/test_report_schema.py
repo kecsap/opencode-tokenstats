@@ -18,7 +18,7 @@ def _metric() -> CanonicalMetrics:
         api_calls=1,
         actual_cost_usd=0.01,
         estimated_cost_usd=0.02,
-        token_composition={"input": 10, "output": 5, "reasoning": 1, "cache_read": 2, "tool_output": 4},
+        token_composition={"input": 10, "cache_read": 2, "output": 5, "reasoning": 1},
         component_rows=[
             {
                 "component_type": "tool",
