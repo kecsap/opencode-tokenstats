@@ -1,6 +1,13 @@
 """OpenCode TokenStats package."""
 
 from .client import ApiClientError, OpencodeApiClient
+from .content_attribution import (
+    ApproxTokenCounter,
+    CategoryTotals,
+    ContentAttribution,
+    ToolUsageStat,
+    collect_content_attribution,
+)
 from .telemetry import (
     SessionTelemetryReport,
     TelemetrySchemaError,
@@ -14,6 +21,11 @@ from .telemetry import (
 __all__ = [
     "OpencodeApiClient",
     "ApiClientError",
+    "ApproxTokenCounter",
+    "CategoryTotals",
+    "ToolUsageStat",
+    "ContentAttribution",
+    "collect_content_attribution",
     "TelemetryCall",
     "TelemetrySummary",
     "SessionTelemetryReport",
