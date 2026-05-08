@@ -58,6 +58,17 @@ def test_json_command(monkeypatch) -> None:
     result = runner.invoke(cli.main, ["json", "--period", "month"])
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["period"] == "month"
-    assert "sessions" in payload
-    assert "api_calls" in payload
+    assert payload["overview"]["period"] == "month"
+    assert "tokens" in payload
+    assert "tools" in payload
+    assert "contributors" in payload
+
+
+def test_json_command_markdown(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["json", "--period", "daily", "--format", "md"])
+    assert result.exit_code == 0
+    assert "## Overview" in result.output
+    assert "## Top Tools" in result.output

@@ -18,6 +18,7 @@ from .content_attribution import (
     collect_content_attribution_for_model,
 )
 from .pricing import ModelPricing, PricingLookup, estimate_session_cost_usd
+from .report_schema import build_report_schema, report_to_markdown
 from .cost import CostSummary, build_default_pricing_lookup, calculate_cost_summary
 from .telemetry import (
     SessionTelemetryReport,
@@ -53,6 +54,8 @@ __all__ = [
     "ModelPricing",
     "PricingLookup",
     "estimate_session_cost_usd",
+    "build_report_schema",
+    "report_to_markdown",
     "CostSummary",
     "calculate_cost_summary",
     "build_default_pricing_lookup",

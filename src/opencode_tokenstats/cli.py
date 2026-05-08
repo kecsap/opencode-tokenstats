@@ -13,6 +13,7 @@ from .compatibility import CompatMode, analyze_context_compatibility
 from .content_attribution import collect_content_attribution
 from .local_session_service import LocalSessionService, LocalStorageError
 from .renderer import print_period_report, print_session_report, print_status_report
+from .report_schema import build_report_schema, report_to_markdown
 from .session_service import SessionService
 from .telemetry import collect_telemetry_calls, summarize_telemetry
 from .tokenization import TokenizerRegistry
@@ -231,19 +232,25 @@ def range(ctx: click.Context, from_date: str, to_date: str) -> None:
     default="daily",
     show_default=True,
 )
+@click.option("--format", "output_format", type=click.Choice(["json", "md"]), default="json", show_default=True)
 @click.pass_context
-def json_cmd(ctx: click.Context, period: str) -> None:
+def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
     """Emit aggregate report as JSON."""
     days = {"daily": 1, "weekly": 7, "month": 30}[period]
     end = datetime.now(UTC)
     start = end - timedelta(days=days)
-    report = _build_period_report(ctx.obj, start, end)
-    payload = {
-        "period": period,
-        "mode": ctx.obj["mode"],
-        **report,
-    }
-    click.echo(json.dumps(payload))
+    session_metrics = _collect_period_session_metrics(ctx.obj, start, end)
+    payload = build_report_schema(
+        period=period,
+        mode=str(ctx.obj["mode"]),
+        start=start,
+        end=end,
+        session_metrics=session_metrics,
+    )
+    if output_format == "md":
+        click.echo(report_to_markdown(payload))
+    else:
+        click.echo(json.dumps(payload))
 
 
 def _pick_latest_session_id(sessions: list[dict[str, object]]) -> str | None:
@@ -295,6 +302,7 @@ def _print_period_report(options: dict[str, object], *, days: int, label: str) -
 def _build_period_report(
     options: dict[str, object], start: datetime, end: datetime
 ) -> dict[str, object]:
+    session_metrics = _collect_period_session_metrics(options, start, end)
     sessions = _list_sessions(options)
     total_calls = 0
     total_tokens = 0
@@ -307,15 +315,7 @@ def _build_period_report(
     contributor_map: dict[str, float] = defaultdict(float)
     model_map: dict[str, float] = defaultdict(float)
 
-    for sess in sessions:
-        created = _session_created_at(sess)
-        if created is None or created < start or created >= end:
-            continue
-        sid = sess.get("id")
-        if not isinstance(sid, str) or not sid:
-            continue
-        messages = _get_messages(options, sid)
-        canonical = build_canonical_metrics(sid, messages)
+    for canonical in session_metrics:
         used += 1
         total_calls += canonical.api_calls
         total_tokens += canonical.session_total_tokens
@@ -361,6 +361,23 @@ def _build_period_report(
         "contributor_stats": _finalize_contributor_stats(contributor_map),
         "model_costs": _finalize_model_costs(model_map),
     }
+
+
+def _collect_period_session_metrics(
+    options: dict[str, object], start: datetime, end: datetime
+) -> list[object]:
+    sessions = _list_sessions(options)
+    out = []
+    for sess in sessions:
+        created = _session_created_at(sess)
+        if created is None or created < start or created >= end:
+            continue
+        sid = sess.get("id")
+        if not isinstance(sid, str) or not sid:
+            continue
+        messages = _get_messages(options, sid)
+        out.append(build_canonical_metrics(sid, messages))
+    return out
 
 
 def _print_report(label: str, report: dict[str, object]) -> None:
