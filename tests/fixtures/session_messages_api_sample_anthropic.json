@@ -1,0 +1,38 @@
+[
+  {
+    "role": "assistant",
+    "info": {
+      "role": "assistant",
+      "modelID": "claude-sonnet-4",
+      "providerID": "anthropic",
+      "system": "<available_skills><skill><name>caveman</name><description>compact style</description></skill></available_skills>\n- explore: discovery agent"
+    },
+    "parts": [
+      {
+        "type": "step-finish",
+        "tokens": {
+          "input": 80,
+          "output": 20,
+          "reasoning": 4,
+          "cache": {
+            "read": 10,
+            "write": 2
+          }
+        },
+        "cost": 0.008,
+        "timestamp": 1715001000000
+      },
+      {
+        "type": "tool",
+        "tool": "codegraphcontext_analyze_code_relationships",
+        "state": {
+          "status": "completed",
+          "input": {
+            "target": "Foo"
+          },
+          "output": "ok"
+        }
+      }
+    ]
+  }
+]
