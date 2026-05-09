@@ -9,6 +9,14 @@ import sys
 
 import click
 
+try:
+    import tqdm as tqdm_mod
+
+    TQDM_AVAILABLE = True
+except Exception:
+    tqdm_mod = None  # type: ignore[assignment]
+    TQDM_AVAILABLE = False
+
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from opencode_tokenstats.client import ApiClientError, OpencodeApiClient
@@ -234,14 +242,15 @@ def tokenizer_warmup(pairs: tuple[str, ...], sample_text: str) -> None:
 def _run_default_warmup_silent() -> None:
     try:
         registry = TokenizerRegistry()
-        registry.warmup(
-            [
-                ("local", "qwen3.6-27b"),
-                ("openai", "gpt-5.3-codex"),
-                ("anthropic", "claude-sonnet-4"),
-            ],
-            sample_text="warmup",
-        )
+        pairs = [
+            ("local", "qwen3.6-27b"),
+            ("openai", "gpt-5.3-codex"),
+            ("anthropic", "claude-sonnet-4"),
+        ]
+        with _SessionProgress(desc="Warming tokenizer cache") as prog:
+            for idx, pair in enumerate(pairs, start=1):
+                registry.warmup([pair], sample_text="warmup")
+                prog.update(idx, len(pairs))
     except Exception:
         # Best-effort optimization only; never block CLI commands.
         return
@@ -320,7 +329,8 @@ def month_cmd(ctx: click.Context, month: str | None) -> None:
         _print_period_report(ctx.obj, days=30, label="month")
     else:
         start, end = _month_window(month)
-        report = _build_period_report(ctx.obj, start, end)
+        with _SessionProgress() as prog:
+            report = _build_period_report(ctx.obj, start, end, progress_callback=prog.update)
         _print_report("month", report)
 
 
@@ -339,7 +349,8 @@ def range(ctx: click.Context, from_date: str, to_date: str) -> None:
     """Show aggregate for explicit date range."""
     start = _parse_date(from_date)
     end = _parse_date(to_date) + timedelta(days=1)
-    report = _build_period_report(ctx.obj, start, end)
+    with _SessionProgress() as prog:
+        report = _build_period_report(ctx.obj, start, end, progress_callback=prog.update)
     _print_report("range", report)
 
 
@@ -360,7 +371,10 @@ def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
         days = {"daily": 1, "weekly": 7, "month": 30}[period]
         end = datetime.now(UTC)
         start = end - timedelta(days=days)
-    session_metrics = _collect_period_session_metrics(ctx.obj, start, end)
+    with _SessionProgress() as prog:
+        session_metrics = _collect_period_session_metrics(
+            ctx.obj, start, end, progress_callback=prog.update
+        )
     payload = build_report_schema(
         period=period,
         mode=str(ctx.obj["mode"]),
@@ -413,16 +427,52 @@ def _print_compatibility_check(
             )
 
 
+class _SessionProgress:
+    """Context manager that shows a transient progress bar during session data collection."""
+
+    def __init__(self, desc: str = "Gathering OpenCode session data") -> None:
+        self._bar: object | None = None
+        self._desc = desc
+
+    def __enter__(self) -> "_SessionProgress":
+        if TQDM_AVAILABLE and tqdm_mod is not None and sys.stderr.isatty():
+            self._bar = tqdm_mod.tqdm(
+                total=0,
+                unit="sessions",
+                unit_divisor=1,
+                file=sys.stderr,
+                leave=False,
+                desc=self._desc,
+                ascii="█░",
+                bar_format="{desc}: |{bar:20}| {n_fmt}/{total_fmt}",
+            )
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        if self._bar is not None:
+            self._bar.close()
+            self._bar = None
+
+    def update(self, current: int, total: int) -> None:
+        if self._bar is not None:
+            if self._bar.total == 0:
+                self._bar.total = total
+                self._bar.refresh()
+            self._bar.update(1)
+
+
 def _print_period_report(options: dict[str, object], *, days: int, label: str) -> None:
     end = datetime.now(UTC)
     start = end - timedelta(days=days)
-    report = _build_period_report(options, start, end)
+    with _SessionProgress() as prog:
+        report = _build_period_report(options, start, end, progress_callback=prog.update)
     _print_report(label, report)
 
 
 def _print_lifetime_report(options: dict[str, object]) -> None:
-    start, end = _lifetime_window(options)
-    report = _build_period_report(options, start, end)
+    with _SessionProgress() as prog:
+        start, end = _lifetime_window(options)
+        report = _build_period_report(options, start, end, progress_callback=prog.update)
     _print_report("lifetime", report)
 
 
@@ -438,9 +488,15 @@ def _lifetime_window(options: dict[str, object]) -> tuple[datetime, datetime]:
 
 
 def _build_period_report(
-    options: dict[str, object], start: datetime, end: datetime
+    options: dict[str, object],
+    start: datetime,
+    end: datetime,
+    *,
+    progress_callback: callable | None = None,
 ) -> dict[str, object]:
-    session_metrics = _collect_period_session_metrics(options, start, end)
+    session_metrics = _collect_period_session_metrics(
+        options, start, end, progress_callback=progress_callback
+    )
     sessions = _list_sessions(options)
     total_calls = 0
     total_tokens = 0
@@ -502,19 +558,30 @@ def _build_period_report(
 
 
 def _collect_period_session_metrics(
-    options: dict[str, object], start: datetime, end: datetime
+    options: dict[str, object],
+    start: datetime,
+    end: datetime,
+    *,
+    progress_callback: callable | None = None,
 ) -> list[object]:
     sessions = _list_sessions(options)
     out = []
-    for sess in sessions:
+    total = len(sessions)
+    for idx, sess in enumerate(sessions):
         created = _session_created_at(sess)
         if created is None or created < start or created >= end:
+            if progress_callback:
+                progress_callback(idx + 1, total)
             continue
         sid = sess.get("id")
         if not isinstance(sid, str) or not sid:
+            if progress_callback:
+                progress_callback(idx + 1, total)
             continue
         messages = _get_messages(options, sid)
         out.append(build_canonical_metrics(sid, messages))
+        if progress_callback:
+            progress_callback(idx + 1, total)
     return out
 
 
