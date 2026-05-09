@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 try:
-    from rich.console import Console
+    from rich.console import Console, Group
     from rich.columns import Columns
     from rich.panel import Panel
     from rich.table import Table
@@ -211,7 +211,7 @@ def print_session_report(
         mt.add_column("Model")
         mt.add_column("Cost (API)", justify="right")
         mt.add_column("Cost (Est)", justify="right")
-        for item in model_costs:
+        for item in model_costs[:12]:
             mt.add_row(
                 str(item.get("model")),
                 _fmt_float(item.get("api_cost")),
@@ -220,19 +220,25 @@ def print_session_report(
         console.print(Panel(mt, title="Model Costs", border_style=COL_GREEN))
 
     if mcp_stats and mcp_stats.get("rows"):
-        mcp = Table(show_header=True, box=None)
-        mcp.add_column("MCP")
+        mcp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        mcp.add_column("", style="bold")
+        mcp.add_column("", justify="left")
         mcp.add_column("Tokens", justify="right")
+        mcp.add_column("%", justify="right")
         mcp.add_column("Calls", justify="right")
         mcp.add_column("Tok/Call", justify="right")
-        mcp.add_column("%", justify="right")
-        for row in mcp_stats["rows"]:
+        mcp_filtered = [r for r in mcp_stats["rows"] if r.get("name") not in {"grep", "invalid", "webfetch"}]
+        max_tokens = max((r.get("tokens", 0) for r in mcp_filtered), default=1) or 1
+        for row in mcp_filtered:
+            tokens = int(row.get("tokens", 0))
+            bar_text = _color_bar(tokens, max_tokens, COL_CYAN, width=10)
             mcp.add_row(
                 str(row.get("name")),
-                _fmt_int(row.get("tokens")),
+                bar_text,
+                _fmt_int(tokens),
+                _fmt_float(row.get("percent")),
                 _fmt_int(row.get("calls")),
                 _fmt_float(row.get("tokens_per_call")),
-                _fmt_float(row.get("percent")),
             )
         console.print(Panel(mcp, title="MCP Insights", border_style=COL_CYAN))
 
@@ -308,10 +314,31 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         comp_table = Table(show_header=False, box=None)
         comp_table.add_row("No token composition data")
 
-    # Print side by side using Columns (compact, content-sized)
+    # Build Model Costs panel
+    model_costs = report.get("model_costs")
+    if isinstance(model_costs, list) and model_costs:
+        mt = Table(show_header=True, box=None)
+        mt.add_column("Model")
+        mt.add_column("Cost (API)", justify="right")
+        mt.add_column("Cost (Est)", justify="right")
+        for item in model_costs[:12]:
+            mt.add_row(
+                str(item.get("model")),
+                _fmt_float(item.get("api_cost")),
+                _fmt_float(item.get("estimated_cost")),
+            )
+        model_costs_panel = Panel(mt, title="Model Costs", border_style=COL_GREEN)
+    else:
+        model_costs_panel = None
+
+    # Layout: left column = Period Summary + Token Composition (stacked), right column = Model Costs
     summary_panel = Panel(summary_table, title="Period Summary", border_style=COL_MAGENTA)
     comp_panel = Panel(comp_table, title="Token Composition", border_style=COL_BLUE)
-    console.print(Columns([summary_panel, comp_panel], equal=True, padding=0))
+    left_group = Group(summary_panel, comp_panel)
+    if model_costs_panel:
+        console.print(Columns([left_group, model_costs_panel], equal=False, padding=0))
+    else:
+        console.print(left_group)
 
     top_tools = report.get("top_tools")
     if isinstance(top_tools, list) and top_tools:
@@ -323,35 +350,27 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
             tt.add_row(str(item.get("name")), _fmt_int(item.get("output_tokens")), _fmt_int(item.get("call_count")))
         console.print(Panel(tt, title="Top Tools", border_style=COL_GOLD))
 
-    model_costs = report.get("model_costs")
-    if isinstance(model_costs, list) and model_costs:
-        mt = Table(show_header=True, box=None)
-        mt.add_column("Model")
-        mt.add_column("Cost (API)", justify="right")
-        mt.add_column("Cost (Est)", justify="right")
-        for item in model_costs:
-            mt.add_row(
-                str(item.get("model")),
-                _fmt_float(item.get("api_cost")),
-                _fmt_float(item.get("estimated_cost")),
-            )
-        console.print(Panel(mt, title="Model Costs", border_style=COL_GREEN))
-
     mcp_stats = report.get("mcp_stats")
     if isinstance(mcp_stats, dict) and mcp_stats.get("rows"):
-        mcp = Table(show_header=True, box=None)
-        mcp.add_column("MCP")
+        mcp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        mcp.add_column("", style="bold")
+        mcp.add_column("", justify="left")
         mcp.add_column("Tokens", justify="right")
+        mcp.add_column("%", justify="right")
         mcp.add_column("Calls", justify="right")
         mcp.add_column("Tok/Call", justify="right")
-        mcp.add_column("%", justify="right")
-        for row in mcp_stats["rows"]:
+        mcp_filtered = [r for r in mcp_stats["rows"] if r.get("name") not in {"grep", "invalid", "webfetch"}]
+        max_tokens = max((r.get("tokens", 0) for r in mcp_filtered), default=1) or 1
+        for row in mcp_filtered:
+            tokens = int(row.get("tokens", 0))
+            bar_text = _color_bar(tokens, max_tokens, COL_CYAN, width=10)
             mcp.add_row(
                 str(row.get("name")),
-                _fmt_int(row.get("tokens")),
+                bar_text,
+                _fmt_int(tokens),
+                _fmt_float(row.get("percent")),
                 _fmt_int(row.get("calls")),
                 _fmt_float(row.get("tokens_per_call")),
-                _fmt_float(row.get("percent")),
             )
         console.print(Panel(mcp, title="MCP Insights", border_style=COL_CYAN))
 
