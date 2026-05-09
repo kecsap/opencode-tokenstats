@@ -118,9 +118,13 @@ def _build_composition_table(token_composition: dict[str, int], total_tokens: in
         "reasoning": COL_REASONING,
     }
 
-    max_val = max(token_composition.values()) if token_composition else 1
+    excluded = {"cache_write", "web_search_requests"}
+    displayed = {k: v for k, v in token_composition.items() if k not in excluded}
+    max_val = max(displayed.values()) if displayed else 1
 
-    for key, value in token_composition.items():
+    for key, value in displayed.items():
+        if key in excluded:
+            continue
         color = color_map.get(key, COL_TOTAL)
         bar_text = _color_bar(value, max_val, color, width=10)
         pct = value / total_tokens * 100 if total_tokens else 0
@@ -269,7 +273,6 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         print(f"Sessions: {_fmt_int(report['sessions'])}")
         print(f"API calls: {_fmt_int(report['api_calls'])}")
         print(f"Tokens: {_fmt_int(report['tokens'])}")
-        print(f"Cost (API): {_fmt_float(report['api_cost'])}")
         print(f"From: {_fmt_ts_local(report.get('from'))}")
         print(f"To: {_fmt_ts_local(report.get('to'))}")
         if report.get("token_composition"):
@@ -295,7 +298,6 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     summary_table.add_row("Window", label)
     summary_table.add_row("Sessions", _fmt_int(report["sessions"]))
     summary_table.add_row("API calls", _fmt_int(report["api_calls"]))
-    summary_table.add_row("Cost (API)", _fmt_float(report["api_cost"]))
     summary_table.add_row("From", _fmt_ts_local(report["from"]))
     summary_table.add_row("To", _fmt_ts_local(report["to"]))
 

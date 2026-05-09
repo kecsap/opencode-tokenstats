@@ -20,7 +20,6 @@ def test_period_report_formats_numbers_and_local_timestamps(monkeypatch, capsys)
 
     out = capsys.readouterr().out
     assert "1 222 332" in out
-    assert "Cost (API): 12.35" in out
     assert "T11:57:15" not in out
     assert "+00:00" not in out
 
@@ -36,4 +35,3 @@ def test_session_report_formats_fractions(monkeypatch, capsys) -> None:
     )
 
     out = capsys.readouterr().out
-    assert "Cost (API): 0.12" in out
