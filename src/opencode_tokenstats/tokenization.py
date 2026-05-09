@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -176,6 +177,72 @@ class TokenizerRegistry:
                     )
                 )
         return results
+
+    def warmup_parallel(
+        self, model_pairs: list[tuple[str, str]], sample_text: str = "warmup", max_workers: int = 4
+    ) -> list[WarmupResult]:
+        """Warm multiple tokenizers in parallel using ThreadPoolExecutor."""
+        results: list[WarmupResult] = []
+        futures_map: dict[concurrent.futures.Future, tuple[str, str]] = {}
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for provider_id, model_id in model_pairs:
+                future = executor.submit(self._warmup_single, provider_id, model_id, sample_text)
+                futures_map[future] = (provider_id, model_id)
+
+            for future in as_completed(futures_map):
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as exc:
+                    provider_id, model_id = futures_map[future]
+                    resolved = self.resolve_model(provider_id, model_id)
+                    results.append(
+                        WarmupResult(
+                            provider_id=provider_id,
+                            model_id=model_id,
+                            tokenizer_kind=resolved.tokenizer.kind,
+                            tokenizer_value=resolved.tokenizer.value,
+                            status="failed",
+                            warning=str(exc),
+                        )
+                    )
+
+        return results
+
+    def _warmup_single(self, provider_id: str, model_id: str, sample_text: str) -> WarmupResult:
+        """Warm a single tokenizer model."""
+        resolved = self.resolve_model(provider_id, model_id)
+        if resolved.tokenizer.kind == "approx":
+            return WarmupResult(
+                provider_id=provider_id,
+                model_id=model_id,
+                tokenizer_kind=resolved.tokenizer.kind,
+                tokenizer_value=resolved.tokenizer.value,
+                status="approximate",
+                warning="no exact tokenizer mapping, approximate mode",
+            )
+
+        try:
+            count_result = self.count(sample_text, resolved.tokenizer)
+            status = "approximate" if count_result.approximate else "warmed"
+            return WarmupResult(
+                provider_id=provider_id,
+                model_id=model_id,
+                tokenizer_kind=resolved.tokenizer.kind,
+                tokenizer_value=resolved.tokenizer.value,
+                status=status,
+                warning=count_result.warning,
+            )
+        except Exception as exc:
+            return WarmupResult(
+                provider_id=provider_id,
+                model_id=model_id,
+                tokenizer_kind=resolved.tokenizer.kind,
+                tokenizer_value=resolved.tokenizer.value,
+                status="failed",
+                warning=str(exc),
+            )
 
     def _count_tiktoken(self, text: str, model: str) -> TokenCountResult:
         try:

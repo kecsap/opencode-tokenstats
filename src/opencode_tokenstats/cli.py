@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
+import os
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 from collections import defaultdict
 from pathlib import Path
@@ -225,7 +228,8 @@ def tokenizer_warmup(pairs: tuple[str, ...], sample_text: str) -> None:
             ("anthropic", "claude-sonnet-4"),
         ]
 
-    results = registry.warmup(parsed, sample_text=sample_text)
+    max_workers = min(len(parsed), max(os.cpu_count() or 1, 1))
+    results = registry.warmup_parallel(parsed, sample_text=sample_text, max_workers=max_workers)
     warmed = sum(1 for r in results if r.status == "warmed")
     approx = sum(1 for r in results if r.status == "approximate")
     failed = sum(1 for r in results if r.status == "failed")
@@ -248,8 +252,8 @@ def _run_default_warmup_silent() -> None:
             ("anthropic", "claude-sonnet-4"),
         ]
         with _SessionProgress(desc="Warming tokenizer cache") as prog:
-            for idx, pair in enumerate(pairs, start=1):
-                registry.warmup([pair], sample_text="warmup")
+            results = registry.warmup_parallel(pairs, sample_text="warmup")
+            for idx, _ in enumerate(results, start=1):
                 prog.update(idx, len(pairs))
     except Exception:
         # Best-effort optimization only; never block CLI commands.
@@ -567,22 +571,68 @@ def _collect_period_session_metrics(
     sessions = _list_sessions(options)
     out = []
     total = len(sessions)
-    for idx, sess in enumerate(sessions):
+
+    # Filter sessions by date range first
+    eligible_sessions = []
+    for sess in sessions:
         created = _session_created_at(sess)
-        if created is None or created < start or created >= end:
-            if progress_callback:
-                progress_callback(idx + 1, total)
-            continue
         sid = sess.get("id")
-        if not isinstance(sid, str) or not sid:
-            if progress_callback:
-                progress_callback(idx + 1, total)
-            continue
+        if created is not None and created >= start and created < end and isinstance(sid, str) and sid:
+            eligible_sessions.append((sid, sess))
+
+    if not eligible_sessions:
+        return out
+
+    # Parallel fetch messages for eligible sessions
+    def fetch_session(sid: str) -> tuple[str, list[dict[str, object]]]:
         messages = _get_messages(options, sid)
-        out.append(build_canonical_metrics(sid, messages))
-        if progress_callback:
-            progress_callback(idx + 1, total)
+        return (sid, messages)
+
+    max_workers = min(len(eligible_sessions), 8)  # Cap at 8 workers
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(fetch_session, sid): sid for sid, _ in eligible_sessions}
+
+        results = {}
+        for future in as_completed(futures):
+            try:
+                sid, messages = future.result()
+                results[sid] = messages
+            except Exception:
+                pass
+
+    # Build canonical metrics in parallel across CPU cores.
+    worker_count = min(len(results), max(os.cpu_count() or 1, 1))
+    if worker_count <= 1:
+        for sid, messages in results.items():
+            out.append(build_canonical_metrics(sid, messages))
+            if progress_callback:
+                progress_callback(len(out), len(eligible_sessions))
+        return out
+
+    start_method = "fork" if sys.platform.startswith("linux") else "spawn"
+    with ProcessPoolExecutor(max_workers=worker_count, mp_context=mp.get_context(start_method)) as executor:
+        futures = {
+            executor.submit(_build_session_metrics, sid, messages): sid
+            for sid, messages in results.items()
+        }
+        done = 0
+        for future in as_completed(futures):
+            sid = futures[future]
+            try:
+                out.append(future.result())
+            except Exception:
+                # Best-effort: fall back to local compute if worker fails.
+                messages = results.get(sid, [])
+                out.append(build_canonical_metrics(sid, messages))
+            done += 1
+            if progress_callback:
+                progress_callback(done, len(eligible_sessions))
+
     return out
+
+
+def _build_session_metrics(session_id: str, messages: list[dict[str, object]]) -> object:
+    return build_canonical_metrics(session_id, messages)
 
 
 def _print_report(label: str, report: dict[str, object]) -> None:

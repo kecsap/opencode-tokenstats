@@ -100,6 +100,9 @@ class DummyRegistry:
             R("local", "qwen3.6-27b", "huggingface", "Qwen/Qwen3-32B", "approximate", "fallback"),
         ]
 
+    def warmup_parallel(self, _pairs, sample_text="warmup", max_workers=1):
+        return self.warmup(_pairs, sample_text=sample_text)
+
 
 def test_health_ok(monkeypatch) -> None:
     monkeypatch.setattr(cli, "OpencodeApiClient", DummyClient)

@@ -103,6 +103,7 @@ octoken health --compat-mode tokenscope_compat --compat-session-id <session-id>
 ## Warmup Behavior
 
 - Tokenizer warmup is enabled by default for normal commands.
+- Warmup runs in parallel by default (up to 4 workers) for faster cache loading.
 - Disable with `--no-warmup` when needed.
 
 ```bash
