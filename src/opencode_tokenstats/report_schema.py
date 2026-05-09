@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from .canonical_metrics import CanonicalMetrics
+from .pricing import load_model_aliases
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,11 +24,18 @@ def build_report_schema(
     start: datetime,
     end: datetime,
     session_metrics: list[CanonicalMetrics],
+    model_alias_file: str | None = None,
 ) -> dict[str, Any]:
     total_sessions = len(session_metrics)
     total_api_calls = sum(m.api_calls for m in session_metrics)
     total_tokens = sum(m.session_total_tokens for m in session_metrics)
-    total_api_cost = round(sum(m.estimated_cost_usd for m in session_metrics), 6)
+    total_api_cost = round(
+        sum(
+            m.actual_cost_usd if m.actual_cost_usd > 0 else m.estimated_cost_usd
+            for m in session_metrics
+        ),
+        6,
+    )
 
     token_totals = {
         "input": sum(m.input_tokens for m in session_metrics),
@@ -38,13 +46,18 @@ def build_report_schema(
 
     tools: dict[str, dict[str, int]] = {}
     contributors: dict[str, int] = {}
-    models: dict[str, float] = {}
+    models: dict[str, dict[str, float]] = {}
     components: dict[tuple[str, str, str], int] = {}
     skills: dict[str, int] = {}
     subagents: dict[str, int] = {}
 
+    aliases = load_model_aliases(model_alias_file)
     for m in session_metrics:
-        models[m.model] = round(models.get(m.model, 0.0) + m.estimated_cost_usd, 6)
+        model_key = aliases.get(m.model, m.model)
+        if model_key not in models:
+            models[model_key] = {"api_cost": 0.0, "estimated_cost": 0.0}
+        models[model_key]["api_cost"] = round(models[model_key]["api_cost"] + m.actual_cost_usd, 6)
+        models[model_key]["estimated_cost"] = round(models[model_key]["estimated_cost"] + m.estimated_cost_usd, 6)
         for row in m.tool_rows:
             name = str(row["tool"])
             if name not in tools:
@@ -74,8 +87,20 @@ def build_report_schema(
     contributor_rows = [{"name": k, "tokens": v} for k, v in contributors.items()]
     contributor_rows.sort(key=lambda x: x["tokens"], reverse=True)
 
-    model_rows = [{"model": k, "api_cost": round(v, 6)} for k, v in models.items()]
-    model_rows.sort(key=lambda x: x["api_cost"], reverse=True)
+    model_rows = []
+    for k, costs in models.items():
+        api_cost = costs["api_cost"]
+        estimated_cost = costs["estimated_cost"]
+        primary_cost = api_cost if api_cost > 0 else estimated_cost
+        model_rows.append(
+            {
+                "model": k,
+                "api_cost": round(api_cost, 6),
+                "estimated_cost": round(estimated_cost, 6),
+                "cost": round(primary_cost, 6),
+            }
+        )
+    model_rows.sort(key=lambda x: x["cost"], reverse=True)
 
     component_rows = [
         {
@@ -143,5 +168,5 @@ def report_to_markdown(report: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Top Models")
     for model in report.get("models", [])[:10]:
-        lines.append(f"- {model['model']}: ${model['api_cost']}")
+        lines.append(f"- {model['model']}: API=${model['api_cost']}, Est=${model['estimated_cost']}")
     return "\n".join(lines) + "\n"

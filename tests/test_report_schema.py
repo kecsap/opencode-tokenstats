@@ -63,3 +63,54 @@ def test_report_to_markdown() -> None:
     assert "## Overview" in md
     assert "## Top Tools" in md
     assert "## Top Models" in md
+
+
+def test_model_costs_separate_api_and_estimated() -> None:
+    """Test that API costs and estimated costs are tracked separately."""
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 2, tzinfo=UTC)
+    report = build_report_schema(
+        period="daily", mode="local", start=start, end=end, session_metrics=[_metric()]
+    )
+    models = report["models"]
+    assert len(models) == 1
+    model = models[0]
+    assert model["model"] == "gpt-5.3-codex"
+    assert model["api_cost"] == 0.01
+    assert model["estimated_cost"] == 0.02
+    # Primary cost should be API cost when available
+    assert model["cost"] == 0.01
+
+
+def test_model_costs_uses_estimated_when_no_api() -> None:
+    """Test that estimated cost is used as primary when API cost is 0."""
+    metric = _metric()
+    metric_zero = CanonicalMetrics(
+        session_id="s2",
+        model="gpt-5.3-codex",
+        input_tokens=metric.input_tokens,
+        output_tokens=metric.output_tokens,
+        reasoning_tokens=metric.reasoning_tokens,
+        cache_read_tokens=metric.cache_read_tokens,
+        session_total_tokens=metric.session_total_tokens,
+        api_calls=metric.api_calls,
+        actual_cost_usd=0.0,  # No API cost
+        estimated_cost_usd=0.05,
+        token_composition=metric.token_composition,
+        component_rows=metric.component_rows,
+        contributor_rows=metric.contributor_rows,
+        tool_rows=metric.tool_rows,
+        mcp_rows=metric.mcp_rows,
+    )
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 2, tzinfo=UTC)
+    report = build_report_schema(
+        period="daily", mode="local", start=start, end=end, session_metrics=[metric_zero]
+    )
+    models = report["models"]
+    assert len(models) == 1
+    model = models[0]
+    assert model["api_cost"] == 0.0
+    assert model["estimated_cost"] == 0.05
+    # Primary cost should be estimated when API cost is 0
+    assert model["cost"] == 0.05

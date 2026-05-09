@@ -50,3 +50,68 @@ def test_estimate_session_cost_uses_reasoning_and_cache_components() -> None:
 def test_canonical_model_keys_match_converter_style() -> None:
     assert canonical_model_keys("gpt-5.3-codex") == ["gpt-5.3-codex", "openai/gpt-5.3-codex", "azure/gpt-5.3-codex"]
     assert canonical_model_keys("openai/gpt-5.3-codex") == ["openai/gpt-5.3-codex", "gpt-5.3-codex"]
+
+
+def test_load_model_aliases_empty() -> None:
+    from opencode_tokenstats.pricing import load_model_aliases
+    # No file exists, should return empty dict
+    import os
+    old_env = os.environ.get("OPENCODE_MODEL_ALIASES_FILE")
+    os.environ["OPENCODE_MODEL_ALIASES_FILE"] = "/nonexistent/path"
+    try:
+        result = load_model_aliases()
+        assert result == {}
+    finally:
+        if old_env is None:
+            os.environ.pop("OPENCODE_MODEL_ALIASES_FILE", None)
+        else:
+            os.environ["OPENCODE_MODEL_ALIASES_FILE"] = old_env
+
+
+def test_load_model_aliases_from_file(tmp_path) -> None:
+    from opencode_tokenstats.pricing import load_model_aliases
+    import os
+
+    conf = tmp_path / "models.conf"
+    conf.write_text(
+        "# Comment\n"
+        "gpt-unified = azure/gpt-5.4 openai/gpt-5.4\n"
+        "claude-pro = anthropic/claude-sonnet-4\n"
+    )
+    old_env = os.environ.get("OPTOKEN_MODEL_ALIAS_FILE")
+    os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = str(conf)
+    try:
+        result = load_model_aliases()
+        assert result["azure/gpt-5.4"] == "gpt-unified"
+        assert result["openai/gpt-5.4"] == "gpt-unified"
+        assert result["anthropic/claude-sonnet-4"] == "claude-pro"
+    finally:
+        if old_env is None:
+            os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)
+        else:
+            os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = old_env
+
+
+def test_load_local_model_patterns(tmp_path) -> None:
+    from opencode_tokenstats.pricing import load_local_model_patterns
+    import os
+
+    conf = tmp_path / "models.conf"
+    conf.write_text(
+        "# Comment\n"
+        "gpt-unified = azure/gpt-5.4 openai/gpt-5.4\n"
+        "@local myollama/* myllamacpp/*\n"
+        "@local *qwen36*\n"
+    )
+    old_env = os.environ.get("OPTOKEN_MODEL_ALIAS_FILE")
+    os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = str(conf)
+    try:
+        result = load_local_model_patterns()
+        assert "myollama/*" in result
+        assert "myllamacpp/*" in result
+        assert "*qwen36*" in result
+    finally:
+        if old_env is None:
+            os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)
+        else:
+            os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = old_env

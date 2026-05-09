@@ -30,6 +30,7 @@ if __package__ in {None, ""}:
     from opencode_tokenstats.report_schema import build_report_schema, report_to_markdown
     from opencode_tokenstats.session_service import SessionService
     from opencode_tokenstats.tokenization import TokenizerRegistry
+    from opencode_tokenstats.pricing import load_model_aliases
 else:
     from .client import ApiClientError, OpencodeApiClient
     from .canonical_metrics import build_canonical_metrics
@@ -39,6 +40,7 @@ else:
     from .report_schema import build_report_schema, report_to_markdown
     from .session_service import SessionService
     from .tokenization import TokenizerRegistry
+    from .pricing import load_model_aliases
 
 
 class OrderedCommandsGroup(click.Group):
@@ -78,6 +80,7 @@ class OrderedCommandsGroup(click.Group):
 @click.option("--mode", type=click.Choice(["local", "api"]), default="local", show_default=True)
 @click.option("--db-path", default=None)
 @click.option("--no-warmup", is_flag=True, help="Disable automatic tokenizer warmup")
+@click.option("--model-alias-file", default=None, help="Path to models.conf alias file")
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -89,6 +92,7 @@ def main(
     mode: str,
     db_path: str | None,
     no_warmup: bool,
+    model_alias_file: str | None,
 ) -> None:
     """OpenCode TokenStats CLI."""
     ctx.obj = {
@@ -99,6 +103,7 @@ def main(
         "retries": retries,
         "mode": mode,
         "db_path": db_path,
+        "model_alias_file": model_alias_file,
         "no_warmup": no_warmup,
     }
 
@@ -286,7 +291,14 @@ def session(ctx: click.Context, session_id: str | None) -> None:
         "rows": canonical.contributor_rows,
         "total_tokens": sum(r["tokens"] for r in canonical.contributor_rows),
     }
-    model_costs = [{"model": canonical.model, "cost": round(canonical.estimated_cost_usd, 6)}]
+    model_costs = [
+        {
+            "model": canonical.model,
+            "api_cost": round(canonical.actual_cost_usd, 6),
+            "estimated_cost": round(canonical.estimated_cost_usd, 6),
+            "cost": round(canonical.actual_cost_usd if canonical.actual_cost_usd > 0 else canonical.estimated_cost_usd, 6),
+        }
+    ]
     print_session_report(
         sid,
         canonical.api_calls,
@@ -385,6 +397,7 @@ def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
         start=start,
         end=end,
         session_metrics=session_metrics,
+        model_alias_file=ctx.obj.get("model_alias_file"),
     )
     if output_format == "md":
         click.echo(report_to_markdown(payload))
@@ -511,7 +524,8 @@ def _build_period_report(
     mcp_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
     component_map: dict[str, float] = defaultdict(float)
     contributor_map: dict[str, float] = defaultdict(float)
-    model_map: dict[str, float] = defaultdict(float)
+    aliases = load_model_aliases(options.get("model_alias_file"))
+    model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0})
 
     for canonical in session_metrics:
         used += 1
@@ -530,7 +544,9 @@ def _build_period_report(
             component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"] += float(r["tokens"])
         for row in canonical.contributor_rows:
             contributor_map[row["name"]] += float(row["tokens"])
-        model_map[canonical.model] += float(canonical.estimated_cost_usd)
+        model_key = aliases.get(canonical.model, canonical.model)
+        model_map[model_key]["api_cost"] += float(canonical.actual_cost_usd)
+        model_map[model_key]["estimated_cost"] += float(canonical.estimated_cost_usd)
 
     top_tools = sorted(
         [
@@ -921,23 +937,38 @@ def _extract_model_id_from_message(message: dict[str, object]) -> str:
 
 
 def _build_model_costs_from_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:
-    model_map: dict[str, float] = defaultdict(float)
-    _accumulate_model_costs(model_map, messages)
+    aliases = load_model_aliases()
+    model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0})
+    _accumulate_model_costs(model_map, messages, aliases)
     return _finalize_model_costs(model_map)
 
 
-def _accumulate_model_costs(model_map: dict[str, float], messages: list[dict[str, object]]) -> None:
+def _accumulate_model_costs(model_map: dict[str, dict[str, float]], messages: list[dict[str, object]], aliases: dict[str, str]) -> None:
     for msg in messages:
         role = msg.get("role")
         if role != "assistant":
             continue
-        model_id = _extract_model_id_from_message(msg)
-        message_cost = summarize_telemetry(collect_telemetry_calls([msg])).total_cost
-        model_map[model_id] += float(message_cost)
+        model_id = aliases.get(_extract_model_id_from_message(msg), _extract_model_id_from_message(msg))
+        telemetry = summarize_telemetry(collect_telemetry_calls([msg]))
+        model_map[model_id]["api_cost"] += float(telemetry.total_cost)
+        # Estimated cost would need pricing lookup; for now use API cost as proxy for estimated
+        model_map[model_id]["estimated_cost"] += float(telemetry.total_cost)
 
 
-def _finalize_model_costs(model_map: dict[str, float]) -> list[dict[str, object]]:
-    rows = [{"model": model, "cost": round(cost, 6)} for model, cost in model_map.items()]
+def _finalize_model_costs(model_map: dict[str, dict[str, float]]) -> list[dict[str, object]]:
+    rows = []
+    for model, costs in model_map.items():
+        api_cost = costs.get("api_cost", 0.0)
+        estimated_cost = costs.get("estimated_cost", 0.0)
+        primary_cost = api_cost if api_cost > 0 else estimated_cost
+        rows.append(
+            {
+                "model": model,
+                "api_cost": round(api_cost, 6),
+                "estimated_cost": round(estimated_cost, 6),
+                "cost": round(primary_cost, 6),
+            }
+        )
     rows.sort(key=lambda x: float(x["cost"]), reverse=True)
     return rows[:10]
 

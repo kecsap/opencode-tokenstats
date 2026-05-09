@@ -38,6 +38,10 @@ octoken health
 - `json --period daily|weekly|month|lifetime --format json|md`: canonical report schema output
 - `tokenizer-warmup`: preload tokenizer caches
 
+### Global Options
+
+- `--model-alias-file <path>`: path to models.conf alias file (overrides default search)
+
 ## Makefile Shortcuts
 
 ```bash
@@ -116,3 +120,38 @@ octoken --no-warmup daily
 # Explicit preload command
 octoken tokenizer-warmup --pair local:qwen3.6-27b --pair openai:gpt-5.3-codex
 ```
+
+## Model Costs
+
+The Model Costs table shows both API costs (from telemetry) and estimated costs (from pricing lookup):
+
+- **Cost (API)**: Actual cost reported by the API provider
+- **Cost (Est)**: Estimated cost based on token counts and pricing data
+- Primary cost uses API cost when available, falls back to estimated cost otherwise
+
+## Model Aliases (models.conf)
+
+Merge multiple model IDs under a single alias via `models.conf`:
+
+```
+# models.conf (in current working directory)
+gpt-unified = azure/gpt-5.4 openai/gpt-5.4
+claude-pro = anthropic/claude-sonnet-4
+
+# Mark models as local (no API cost) using wildcard patterns
+@local myollama/* myllamacpp/*
+@local *qwen36*
+```
+
+**Configuration:**
+- File format: `alias_name = model1 model2 model3`
+- Local models: `@local pattern1 pattern2` (supports `*` wildcard)
+- Comments: lines starting with `#`
+- Blank lines are skipped
+
+**Load locations (priority order):**
+1. `--model-alias-file` CLI option
+2. `OPTOKEN_MODEL_ALIAS_FILE` environment variable
+3. Current working directory: `models.conf`
+
+Aliases are applied when aggregating model costs across sessions. Local models have API cost set to 0.

@@ -91,3 +91,60 @@ def test_model_includes_provider_prefix() -> None:
 
     out = build_canonical_metrics("s3", messages)
     assert out.model == "azure/gpt-5.3-codex"
+
+
+def test_local_model_has_zero_api_cost(tmp_path) -> None:
+    from opencode_tokenstats.canonical_metrics import _is_local_model
+    import os
+
+    conf = tmp_path / "models.conf"
+    conf.write_text("@local myollama/* myllamacpp/* *qwen36*\n")
+    old_env = os.environ.get("OPTOKEN_MODEL_ALIAS_FILE")
+    os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = str(conf)
+    try:
+        # Local patterns
+        assert _is_local_model("myollama/qwen3.6:35b-yarn")
+        assert _is_local_model("myllamacpp/qwen3.6-27b1")
+        assert _is_local_model("llamacpp_qwen36_gpu/qwen3.6-27b1")
+
+        # Non-local patterns
+        assert not _is_local_model("azure/gpt-5.4")
+        assert not _is_local_model("openai/gpt-5.3-codex")
+        assert not _is_local_model("anthropic/claude-sonnet-4")
+    finally:
+        if old_env is None:
+            os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)
+        else:
+            os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = old_env
+
+
+def test_local_model_cost_is_zero(tmp_path) -> None:
+    import os
+
+    conf = tmp_path / "models.conf"
+    conf.write_text("@local myollama/*\n")
+    old_env = os.environ.get("OPTOKEN_MODEL_ALIAS_FILE")
+    os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = str(conf)
+    try:
+        messages = [
+            {
+                "role": "assistant",
+                "info": {
+                    "providerID": "myollama",
+                    "modelID": "qwen3.6:35b-yarn",
+                    "tokens": {"input": 100, "output": 50, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                    "cost": 18.78,  # Cost in telemetry, but should be ignored for local models
+                },
+                "parts": [{"type": "text", "text": "ok"}],
+            }
+        ]
+
+        out = build_canonical_metrics("s-local", messages)
+        assert out.model == "myollama/qwen3.6:35b-yarn"
+        assert out.actual_cost_usd == 0.0  # API cost should be 0 for local models
+        assert out.estimated_cost_usd > 0  # Estimated cost should be calculated
+    finally:
+        if old_env is None:
+            os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)
+        else:
+            os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = old_env

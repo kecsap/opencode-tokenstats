@@ -206,8 +206,13 @@ def print_session_report(
         mt = Table(show_header=True, box=None)
         mt.add_column("Model")
         mt.add_column("Cost (API)", justify="right")
+        mt.add_column("Cost (Est)", justify="right")
         for item in model_costs:
-            mt.add_row(str(item.get("model")), _fmt_float(item.get("cost")))
+            mt.add_row(
+                str(item.get("model")),
+                _fmt_float(item.get("api_cost")),
+                _fmt_float(item.get("estimated_cost")),
+            )
         console.print(Panel(mt, title="Model Costs", border_style=COL_GREEN))
 
     if mcp_stats and mcp_stats.get("rows"):
@@ -321,8 +326,13 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         mt = Table(show_header=True, box=None)
         mt.add_column("Model")
         mt.add_column("Cost (API)", justify="right")
+        mt.add_column("Cost (Est)", justify="right")
         for item in model_costs:
-            mt.add_row(str(item.get("model")), _fmt_float(item.get("cost")))
+            mt.add_row(
+                str(item.get("model")),
+                _fmt_float(item.get("api_cost")),
+                _fmt_float(item.get("estimated_cost")),
+            )
         console.print(Panel(mt, title="Model Costs", border_style=COL_GREEN))
 
     mcp_stats = report.get("mcp_stats")

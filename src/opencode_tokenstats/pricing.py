@@ -6,6 +6,91 @@ import os
 from pathlib import Path
 
 
+def load_model_aliases(file_path: str | None = None) -> dict[str, str]:
+    """Load model ID aliases from models.conf file.
+
+    Format: one alias per line, e.g. 'alias_name = openai/gpt-5.4'
+    Or grouped: 'alias_name = azure/gpt-5.4 openai/gpt-5.4'
+
+    Search locations (in order):
+    1. Explicit file_path parameter
+    2. OPTOKEN_MODEL_ALIAS_FILE environment variable
+    3. Current working directory: models.conf
+    """
+    candidates: list[Path] = []
+
+    if file_path:
+        candidates.append(Path(file_path))
+
+    env_file = os.environ.get("OPTOKEN_MODEL_ALIAS_FILE", "")
+    if env_file:
+        candidates.append(Path(env_file))
+
+    candidates.append(Path.cwd() / "models.conf")
+
+    aliases: dict[str, str] = {}
+    for conf_path in candidates:
+        if conf_path.exists():
+            try:
+                for line in conf_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        key, val = line.split("=", 1)
+                        key = key.strip()
+                        for raw_id in val.split():
+                            raw_id = raw_id.strip()
+                            if raw_id:
+                                aliases[raw_id] = key
+            except Exception:
+                pass
+            break
+    return aliases
+
+
+def load_local_model_patterns(file_path: str | None = None) -> list[str]:
+    """Load local model wildcard patterns from models.conf file.
+
+    Format: lines starting with '@local ' followed by space-separated patterns.
+    Patterns support * wildcard, e.g.:
+      @local myollama/* myllamacpp/* *qwen36*
+
+    Search locations (in order):
+    1. Explicit file_path parameter
+    2. OPTOKEN_MODEL_ALIAS_FILE environment variable
+    3. Current working directory: models.conf
+    """
+    candidates: list[Path] = []
+
+    if file_path:
+        candidates.append(Path(file_path))
+
+    env_file = os.environ.get("OPTOKEN_MODEL_ALIAS_FILE", "")
+    if env_file:
+        candidates.append(Path(env_file))
+
+    candidates.append(Path.cwd() / "models.conf")
+
+    patterns: list[str] = []
+    for conf_path in candidates:
+        if conf_path.exists():
+            try:
+                for line in conf_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if line.startswith("@local "):
+                        for pat in line[len("@local "):].split():
+                            pat = pat.strip()
+                            if pat:
+                                patterns.append(pat)
+            except Exception:
+                pass
+            break
+    return patterns
+
+
 @dataclass(frozen=True, slots=True)
 class ModelPricing:
     input: float

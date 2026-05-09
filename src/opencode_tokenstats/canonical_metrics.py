@@ -7,6 +7,9 @@ import re
 from .content_attribution import collect_content_attribution
 from .cost import build_default_pricing_lookup, calculate_cost_summary
 from .telemetry import collect_telemetry_calls, summarize_telemetry
+from .pricing import load_local_model_patterns
+
+import fnmatch
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,8 +41,6 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
         model_name=model,
         pricing_lookup=build_default_pricing_lookup(),
     )
-    primary_cost = telemetry.total_cost if telemetry.total_cost > 0 else cost.estimated_session_cost
-
     tool_rows: list[dict[str, Any]] = []
     component_rows: list[dict[str, Any]] = []
     total_tool_tokens = sum(t.output_tokens for t in attribution.tool_usage)
@@ -123,8 +124,8 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
         cache_read_tokens=telemetry.cache_read_tokens,
         session_total_tokens=telemetry.total_tokens,
         api_calls=telemetry.api_calls,
-        actual_cost_usd=telemetry.total_cost,
-        estimated_cost_usd=primary_cost,
+        actual_cost_usd=0.0 if _is_local_model(model) else telemetry.total_cost,
+        estimated_cost_usd=0.0 if (not _is_local_model(model) and telemetry.total_cost > 0) else cost.estimated_session_cost,
         token_composition=token_composition,
         component_rows=component_rows,
         contributor_rows=contributor_rows[:10],
@@ -152,6 +153,21 @@ def _detect_model(messages: list[dict[str, Any]]) -> str:
                 return f"{nested_provider_id}/{nested_model_id}"
             return nested_model_id
     return "unknown"
+
+
+def _is_local_model(model: str) -> bool:
+    """Check if a model is a local model (no API cost).
+
+    Uses wildcard patterns from models.conf @local directive.
+    Patterns support * wildcard, e.g.: myollama/*, *qwen36*
+    """
+    patterns = load_local_model_patterns()
+    if not patterns:
+        return False
+    for pattern in patterns:
+        if fnmatch.fnmatch(model.lower(), pattern.lower()):
+            return True
+    return False
 
 
 def _component_group(name: str) -> str:
