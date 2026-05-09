@@ -14,13 +14,24 @@ try:
 except Exception:  # pragma: no cover
     RICH_AVAILABLE = False
 
-# Codeburn-inspired color palette (lighter, visible on dark terminals)
-COL_INPUT = "#5B9EF5"    # blue
-COL_OUTPUT = "#5BF5A0"   # green
-COL_REASONING = "#E05BF5"  # purple
-COL_CACHE_READ = "#F5C85B"  # yellow
-COL_TOTAL = "#FF8C42"    # orange
-COL_BAR_EMPTY = "#333333"  # dim gray
+# Codeburn dashboard palette
+COL_ORANGE = "#FF8C42"
+COL_BLUE = "#5B9EF5"
+COL_GREEN = "#5BF5A0"
+COL_RED = "#F55B5B"
+COL_PURPLE = "#E05BF5"
+COL_YELLOW = "#F5C85B"
+COL_CYAN = "#5BF5E0"
+COL_MAGENTA = "#F55BE0"
+COL_GOLD = "#FFD700"
+COL_DIM = "#555555"
+COL_BAR_EMPTY = "#333333"
+
+COL_INPUT = COL_BLUE
+COL_OUTPUT = COL_GREEN
+COL_REASONING = COL_PURPLE
+COL_CACHE_READ = COL_YELLOW
+COL_TOTAL = COL_ORANGE
 
 
 def _fmt_int(value: Any) -> str:
@@ -58,16 +69,36 @@ def _bar(value: int, max_value: int, width: int = 12) -> str:
     return "\u2588" * filled + "\u2591" * (width - filled)
 
 
+def _to_hex(r: float, g: float, b: float) -> str:
+    return f"#{int(round(r)):02x}{int(round(g)):02x}{int(round(b)):02x}"
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + t * (b - a)
+
+
+def _gradient_color(pct: float) -> str:
+    if pct <= 0.33:
+        t = pct / 0.33 if pct > 0 else 0.0
+        return _to_hex(_lerp(91, 245, t), _lerp(158, 200, t), _lerp(245, 91, t))
+    if pct <= 0.66:
+        t = (pct - 0.33) / 0.33
+        return _to_hex(_lerp(245, 255, t), _lerp(200, 140, t), _lerp(91, 66, t))
+    t = (pct - 0.66) / 0.34
+    return _to_hex(_lerp(255, 245, t), _lerp(140, 91, t), _lerp(66, 91, t))
+
+
 def _color_bar(value: int, max_value: int, color: str, width: int = 12) -> Text:
     """Render a colored horizontal bar."""
     if max_value == 0:
-        return Text("\u2591" * width, style="dim")
+        return Text("\u2591" * width, style=COL_DIM)
     filled = max(1, round(value / max_value * width))
-    filled_chars = "\u2588" * filled
-    empty_chars = "\u2591" * (width - filled)
     bar = Text()
-    bar.append(filled_chars, style=f"bold {color}")
-    bar.append(empty_chars, style="dim")
+    for i in range(min(filled, width)):
+        pct = i / max(width, 1)
+        block_color = _gradient_color(pct)
+        bar.append("\u2588", style=f"bold {block_color}")
+    bar.append("\u2591" * (width - filled), style=COL_BAR_EMPTY)
     return bar
 
 
@@ -113,7 +144,7 @@ def print_status_report(mode: str, sessions: list[dict[str, object]]) -> None:
     table.add_row("Mode", str(mode))
     table.add_row("Sessions", _fmt_int(len(sessions)))
     table.add_row("Latest Session", str(latest))
-    console.print(Panel(table, title="Status", border_style="cyan"))
+    console.print(Panel(table, title="Status", border_style=COL_CYAN))
 
 
 def print_session_report(
@@ -154,11 +185,11 @@ def print_session_report(
     table.add_row("API calls", _fmt_int(api_calls))
     table.add_row("Tokens", _fmt_int(tokens))
     table.add_row("Cost (API)", _fmt_float(api_cost))
-    console.print(Panel(table, title="Session", border_style="green"))
+    console.print(Panel(table, title="Session", border_style=COL_GREEN))
 
     if token_composition:
         comp = _build_composition_table(token_composition, tokens)
-        console.print(Panel(comp, title="Token Composition", border_style="blue"))
+        console.print(Panel(comp, title="Token Composition", border_style=COL_BLUE))
 
     if top_tools:
         tt = Table(show_header=True, box=None)
@@ -167,7 +198,7 @@ def print_session_report(
         tt.add_column("Calls", justify="right")
         for item in top_tools:
             tt.add_row(str(item["name"]), _fmt_int(item["output_tokens"]), _fmt_int(item["call_count"]))
-        console.print(Panel(tt, title="Top Tools", border_style="yellow"))
+        console.print(Panel(tt, title="Top Tools", border_style=COL_GOLD))
 
     if model_costs:
         mt = Table(show_header=True, box=None)
@@ -175,7 +206,7 @@ def print_session_report(
         mt.add_column("Cost (API)", justify="right")
         for item in model_costs:
             mt.add_row(str(item.get("model")), _fmt_float(item.get("cost")))
-        console.print(Panel(mt, title="Model Costs", border_style="green"))
+        console.print(Panel(mt, title="Model Costs", border_style=COL_GREEN))
 
     if mcp_stats and mcp_stats.get("rows"):
         mcp = Table(show_header=True, box=None)
@@ -192,7 +223,7 @@ def print_session_report(
                 _fmt_float(row.get("tokens_per_call")),
                 _fmt_float(row.get("percent")),
             )
-        console.print(Panel(mcp, title="MCP Insights", border_style="cyan"))
+        console.print(Panel(mcp, title="MCP Insights", border_style=COL_CYAN))
 
     if component_stats and component_stats.get("rows"):
         ct = Table(show_header=True, box=None)
@@ -213,7 +244,7 @@ def print_session_report(
                 _fmt_int(row.get("calls", 0)),
                 _fmt_float(row.get("percent")),
             )
-        console.print(Panel(ct, title="Component Contribution", border_style="magenta"))
+        console.print(Panel(ct, title="Component Contribution", border_style=COL_MAGENTA))
 
     if contributor_stats and contributor_stats.get("rows"):
         cc = Table(show_header=True, box=None)
@@ -222,7 +253,7 @@ def print_session_report(
         cc.add_column("%", justify="right")
         for row in contributor_stats["rows"]:
             cc.add_row(str(row.get("name")), _fmt_int(row.get("tokens")), _fmt_float(row.get("percent")))
-        console.print(Panel(cc, title="Top Contributors", border_style="bright_blue"))
+        console.print(Panel(cc, title="Top Contributors", border_style=COL_BLUE))
 
 
 def print_period_report(label: str, report: dict[str, Any]) -> None:
@@ -269,8 +300,8 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         comp_table.add_row("No token composition data")
 
     # Print side by side using Columns (compact, content-sized)
-    summary_panel = Panel(summary_table, title="Period Summary", border_style="magenta")
-    comp_panel = Panel(comp_table, title="Token Composition", border_style="blue")
+    summary_panel = Panel(summary_table, title="Period Summary", border_style=COL_MAGENTA)
+    comp_panel = Panel(comp_table, title="Token Composition", border_style=COL_BLUE)
     console.print(Columns([summary_panel, comp_panel], equal=True, padding=0))
 
     top_tools = report.get("top_tools")
@@ -281,7 +312,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         tt.add_column("Calls", justify="right")
         for item in top_tools:
             tt.add_row(str(item.get("name")), _fmt_int(item.get("output_tokens")), _fmt_int(item.get("call_count")))
-        console.print(Panel(tt, title="Top Tools", border_style="yellow"))
+        console.print(Panel(tt, title="Top Tools", border_style=COL_GOLD))
 
     model_costs = report.get("model_costs")
     if isinstance(model_costs, list) and model_costs:
@@ -290,7 +321,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         mt.add_column("Cost (API)", justify="right")
         for item in model_costs:
             mt.add_row(str(item.get("model")), _fmt_float(item.get("cost")))
-        console.print(Panel(mt, title="Model Costs", border_style="green"))
+        console.print(Panel(mt, title="Model Costs", border_style=COL_GREEN))
 
     mcp_stats = report.get("mcp_stats")
     if isinstance(mcp_stats, dict) and mcp_stats.get("rows"):
@@ -308,7 +339,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_float(row.get("tokens_per_call")),
                 _fmt_float(row.get("percent")),
             )
-        console.print(Panel(mcp, title="MCP Insights", border_style="cyan"))
+        console.print(Panel(mcp, title="MCP Insights", border_style=COL_CYAN))
 
     component_stats = report.get("component_stats")
     if isinstance(component_stats, dict) and component_stats.get("rows"):
@@ -330,7 +361,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_int(row.get("calls", 0)),
                 _fmt_float(row.get("percent")),
             )
-        console.print(Panel(ct, title="Component Contribution", border_style="magenta"))
+        console.print(Panel(ct, title="Component Contribution", border_style=COL_MAGENTA))
 
     contributor_stats = report.get("contributor_stats")
     if isinstance(contributor_stats, dict) and contributor_stats.get("rows"):
@@ -340,4 +371,4 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         cc.add_column("%", justify="right")
         for row in contributor_stats["rows"]:
             cc.add_row(str(row.get("name")), _fmt_int(row.get("tokens")), _fmt_float(row.get("percent")))
-        console.print(Panel(cc, title="Top Contributors", border_style="bright_blue"))
+        console.print(Panel(cc, title="Top Contributors", border_style=COL_BLUE))
