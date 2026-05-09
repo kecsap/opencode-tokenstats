@@ -278,7 +278,7 @@ def session(ctx: click.Context, session_id: str | None) -> None:
             "output_tokens": t["tokens"],
             "call_count": t["calls"],
         }
-        for t in canonical.tool_rows[:5]
+        for t in canonical.tool_rows[:10]
     ]
     mcp_stats = {"rows": canonical.mcp_rows, "total_tokens": sum(r["tokens"] for r in canonical.mcp_rows)}
     component_stats = {"rows": canonical.component_rows, "total_tokens": sum(r["tokens"] for r in canonical.component_rows)}
@@ -424,7 +424,7 @@ def _print_compatibility_check(
     for warning in result.warnings:
         click.echo(f"Compatibility Warning: {warning}")
     if result.tool_schema_estimates:
-        top = result.tool_schema_estimates[:5]
+        top = result.tool_schema_estimates[:10]
         for est in top:
             click.echo(
                 f"Tool Estimate: {est.name} tokens={est.estimated_tokens} args={est.argument_count} complex={est.has_complex_args}"
@@ -543,7 +543,7 @@ def _build_period_report(
         ],
         key=lambda x: (x["output_tokens"], x["call_count"]),
         reverse=True,
-    )[:5]
+    )[:10]
 
     return {
         "sessions": used,
