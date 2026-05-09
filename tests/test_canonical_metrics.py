@@ -148,3 +148,77 @@ def test_local_model_cost_is_zero(tmp_path) -> None:
             os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)
         else:
             os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = old_env
+
+
+def test_estimated_cost_uses_per_call_models(tmp_path) -> None:
+    import json
+    import os
+
+    pricing_path = tmp_path / "models.json"
+    pricing_path.write_text(
+        json.dumps(
+            {
+                "openai/gpt-a": {
+                    "input": 2.0,
+                    "output": 8.0,
+                    "cacheRead": 0.5,
+                    "cacheWrite": 2.5,
+                    "webSearch": 0.01,
+                },
+                "openai/gpt-b": {
+                    "input": 1.0,
+                    "output": 4.0,
+                    "cacheRead": 0.0,
+                    "cacheWrite": 1.0,
+                    "webSearch": 0.02,
+                },
+                "default": {"input": 1.0, "output": 3.0, "cacheRead": 0.0},
+            }
+        )
+    )
+
+    old_pricing_env = os.environ.get("OPENCODE_MODEL_PRICING_FILE")
+    os.environ["OPENCODE_MODEL_PRICING_FILE"] = str(pricing_path)
+    try:
+        messages = [
+            {
+                "role": "assistant",
+                "info": {
+                    "providerID": "openai",
+                    "modelID": "gpt-a",
+                    "tokens": {
+                        "input": 1_000_000,
+                        "output": 500_000,
+                        "reasoning": 500_000,
+                        "cache": {"read": 1_000_000, "write": 1_000_000},
+                        "server_tool_use": {"web_search_requests": 1},
+                    },
+                    "cost": 0.0,
+                },
+                "parts": [{"type": "text", "text": "a"}],
+            },
+            {
+                "role": "assistant",
+                "info": {
+                    "providerID": "openai",
+                    "modelID": "gpt-b",
+                    "tokens": {
+                        "input": 1_000_000,
+                        "output": 500_000,
+                        "reasoning": 500_000,
+                        "cache": {"read": 0, "write": 1_000_000},
+                        "server_tool_use": {"web_search_requests": 2},
+                    },
+                    "cost": 0.0,
+                },
+                "parts": [{"type": "text", "text": "b"}],
+            },
+        ]
+        out = build_canonical_metrics("s-mixed", messages)
+        assert out.actual_cost_usd == 0.0
+        assert out.estimated_cost_usd == 19.05
+    finally:
+        if old_pricing_env is None:
+            os.environ.pop("OPENCODE_MODEL_PRICING_FILE", None)
+        else:
+            os.environ["OPENCODE_MODEL_PRICING_FILE"] = old_pricing_env

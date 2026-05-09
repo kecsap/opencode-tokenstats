@@ -36,15 +36,23 @@ def test_pricing_exact_normalized_and_prefix_fallback() -> None:
 
 
 def test_estimate_session_cost_uses_reasoning_and_cache_components() -> None:
-    pricing = ModelPricing(input=2.0, output=8.0, cache_read=0.5)
+    pricing = ModelPricing(
+        input=2.0,
+        output=8.0,
+        cache_read=0.5,
+        cache_write=2.5,
+        web_search=0.01,
+    )
     cost = estimate_session_cost_usd(
         pricing,
         input_tokens=1_000_000,
         output_tokens=500_000,
         reasoning_tokens=500_000,
         cache_read_tokens=1_000_000,
+        cache_write_tokens=1_000_000,
+        web_search_requests=2,
     )
-    assert cost == 10.5
+    assert cost == 13.02
 
 
 def test_canonical_model_keys_match_converter_style() -> None:

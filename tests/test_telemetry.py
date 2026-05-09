@@ -21,7 +21,8 @@ def test_collect_telemetry_calls_multi_step_assistant_turn() -> None:
                         "input": 100,
                         "output": 10,
                         "reasoning": 5,
-                        "cache": {"read": 0},
+                        "cache": {"read": 0, "write": 1},
+                        "server_tool_use": {"web_search_requests": 1},
                     },
                     "cost": 0.12,
                     "timestamp": 1000,
@@ -32,7 +33,8 @@ def test_collect_telemetry_calls_multi_step_assistant_turn() -> None:
                         "input": 50,
                         "output": 7,
                         "reasoning": 3,
-                        "cache": {"read": 2},
+                        "cache": {"read": 2, "write": 2},
+                        "server_tool_use": {"web_search_requests": 2},
                     },
                     "cost": 0.03,
                     "timestamp": 2000,
@@ -59,6 +61,8 @@ def test_collect_telemetry_calls_multi_step_assistant_turn() -> None:
     assert summary.output_tokens == 17
     assert summary.reasoning_tokens == 8
     assert summary.cache_read_tokens == 2
+    assert summary.cache_write_tokens == 3
+    assert summary.web_search_requests == 3
     assert summary.total_cost == 0.15
     assert summary.most_recent_call is not None
     assert summary.most_recent_call.timestamp_ms == 2000
@@ -73,7 +77,8 @@ def test_collect_telemetry_calls_message_level_cache_fallback() -> None:
                     "input": 20,
                     "output": 30,
                     "reasoning": 10,
-                    "cache": {"read": 80},
+                    "cache": {"read": 80, "write": 5},
+                    "server_tool_use": {"web_search_requests": 4},
                 },
                 "cost": 0.2,
                 "time": {"created": 1000, "completed": 1100},
@@ -88,6 +93,8 @@ def test_collect_telemetry_calls_message_level_cache_fallback() -> None:
     assert summary.output_tokens == 30
     assert summary.reasoning_tokens == 10
     assert summary.cache_read_tokens == 80
+    assert summary.cache_write_tokens == 5
+    assert summary.web_search_requests == 4
     assert summary.total_cost == 0.2
 
 
@@ -130,7 +137,8 @@ class FakeSessionReader:
                                 "input": 10,
                                 "output": 5,
                                 "reasoning": 1,
-                                "cache": {"read": 2},
+                                "cache": {"read": 2, "write": 1},
+                                "server_tool_use": {"web_search_requests": 2},
                             },
                             "cost": 0.01,
                             "timestamp": 200,
@@ -146,7 +154,8 @@ class FakeSessionReader:
                             "input": 7,
                             "output": 8,
                             "reasoning": 2,
-                            "cache": {"read": 1},
+                            "cache": {"read": 1, "write": 2},
+                            "server_tool_use": {"web_search_requests": 1},
                         },
                         "cost": 0.02,
                     },
@@ -162,7 +171,8 @@ class FakeSessionReader:
                                 "input": 3,
                                 "output": 4,
                                 "reasoning": 1,
-"cache": {"read": 0},
+                                "cache": {"read": 0, "write": 3},
+                                "server_tool_use": {"web_search_requests": 5},
                             },
                             "cost": 0.005,
                             "timestamp": 300,
@@ -199,6 +209,8 @@ def test_summarize_session_with_nested_subagents() -> None:
     assert total.output_tokens == 17
     assert total.reasoning_tokens == 4
     assert total.cache_read_tokens == 3
+    assert total.cache_write_tokens == 6
+    assert total.web_search_requests == 8
     assert round(total.total_cost, 3) == 0.035
 
 

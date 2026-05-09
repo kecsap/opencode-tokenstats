@@ -5,8 +5,9 @@ from typing import Any
 import re
 
 from .content_attribution import collect_content_attribution
-from .cost import build_default_pricing_lookup, calculate_cost_summary
+from .cost import build_default_pricing_lookup
 from .telemetry import collect_telemetry_calls, summarize_telemetry
+from .pricing import PricingLookup, estimate_session_cost_usd
 from .pricing import load_local_model_patterns
 
 import fnmatch
@@ -36,10 +37,11 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
     attribution = collect_content_attribution(messages)
     model = _detect_model(messages)
 
-    cost = calculate_cost_summary(
-        telemetry,
-        model_name=model,
-        pricing_lookup=build_default_pricing_lookup(),
+    pricing_lookup = build_default_pricing_lookup()
+    estimated_session_cost = _estimate_session_cost_per_call(
+        messages,
+        fallback_model=model,
+        pricing_lookup=pricing_lookup,
     )
     tool_rows: list[dict[str, Any]] = []
     component_rows: list[dict[str, Any]] = []
@@ -111,8 +113,10 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
     token_composition = {
         "input": telemetry.input_tokens,
         "cache_read": telemetry.cache_read_tokens,
+        "cache_write": telemetry.cache_write_tokens,
         "output": telemetry.output_tokens,
         "reasoning": telemetry.reasoning_tokens,
+        "web_search_requests": telemetry.web_search_requests,
     }
 
     return CanonicalMetrics(
@@ -125,7 +129,7 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
         session_total_tokens=telemetry.total_tokens,
         api_calls=telemetry.api_calls,
         actual_cost_usd=0.0 if _is_local_model(model) else telemetry.total_cost,
-        estimated_cost_usd=0.0 if (not _is_local_model(model) and telemetry.total_cost > 0) else cost.estimated_session_cost,
+        estimated_cost_usd=0.0 if (not _is_local_model(model) and telemetry.total_cost > 0) else estimated_session_cost,
         token_composition=token_composition,
         component_rows=component_rows,
         contributor_rows=contributor_rows[:10],
@@ -138,21 +142,55 @@ def _detect_model(messages: list[dict[str, Any]]) -> str:
     for msg in reversed(messages):
         if msg.get("role") != "assistant":
             continue
-        info = msg.get("info") if isinstance(msg.get("info"), dict) else {}
-        model_id = info.get("modelID")
-        provider_id = info.get("providerID")
-        if isinstance(model_id, str) and model_id:
-            if isinstance(provider_id, str) and provider_id:
-                return f"{provider_id}/{model_id}"
-            return model_id
-        model = info.get("model") if isinstance(info.get("model"), dict) else {}
-        nested_model_id = model.get("modelID")
-        nested_provider_id = model.get("providerID")
-        if isinstance(nested_model_id, str) and nested_model_id:
-            if isinstance(nested_provider_id, str) and nested_provider_id:
-                return f"{nested_provider_id}/{nested_model_id}"
-            return nested_model_id
+        detected = _detect_model_from_message(msg)
+        if detected != "unknown":
+            return detected
     return "unknown"
+
+
+def _detect_model_from_message(message: dict[str, Any]) -> str:
+    info = message.get("info") if isinstance(message.get("info"), dict) else {}
+    model_id = info.get("modelID")
+    provider_id = info.get("providerID")
+    if isinstance(model_id, str) and model_id:
+        if isinstance(provider_id, str) and provider_id:
+            return f"{provider_id}/{model_id}"
+        return model_id
+    model = info.get("model") if isinstance(info.get("model"), dict) else {}
+    nested_model_id = model.get("modelID")
+    nested_provider_id = model.get("providerID")
+    if isinstance(nested_model_id, str) and nested_model_id:
+        if isinstance(nested_provider_id, str) and nested_provider_id:
+            return f"{nested_provider_id}/{nested_model_id}"
+        return nested_model_id
+    return "unknown"
+
+
+def _estimate_session_cost_per_call(
+    messages: list[dict[str, Any]],
+    *,
+    fallback_model: str,
+    pricing_lookup: PricingLookup,
+) -> float:
+    total = 0.0
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        model_name = _detect_model_from_message(msg)
+        if model_name == "unknown":
+            model_name = fallback_model
+        pricing = pricing_lookup.get_pricing(model_name)
+        for call in collect_telemetry_calls([msg]):
+            total += estimate_session_cost_usd(
+                pricing,
+                input_tokens=call.input_tokens,
+                output_tokens=call.output_tokens,
+                reasoning_tokens=call.reasoning_tokens,
+                cache_read_tokens=call.cache_read_tokens,
+                cache_write_tokens=call.cache_write_tokens,
+                web_search_requests=call.web_search_requests,
+            )
+    return total
 
 
 def _is_local_model(model: str) -> bool:

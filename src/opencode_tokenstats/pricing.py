@@ -96,6 +96,9 @@ class ModelPricing:
     input: float
     output: float
     cache_read: float
+    cache_write: float = 0.0
+    web_search: float = 0.0
+    fast_multiplier: float = 1.0
 
 
 class PricingLookup:
@@ -121,7 +124,7 @@ class PricingLookup:
         found = self._find_pricing(model_name)
         if found is not None:
             return found
-        return self.pricing_data.get("default", ModelPricing(input=1, output=3, cache_read=0))
+        return self.pricing_data.get("default", ModelPricing(input=1, output=3, cache_read=0, cache_write=0, web_search=0, fast_multiplier=1))
 
     def has_pricing(self, model_name: str) -> bool:
         return self._find_pricing(model_name) is not None
@@ -173,11 +176,15 @@ def estimate_session_cost_usd(
     output_tokens: int,
     reasoning_tokens: int,
     cache_read_tokens: int,
+    cache_write_tokens: int = 0,
+    web_search_requests: int = 0,
 ) -> float:
     input_cost = (max(0, input_tokens) / 1_000_000) * pricing.input
     output_cost = ((max(0, output_tokens) + max(0, reasoning_tokens)) / 1_000_000) * pricing.output
     cache_read_cost = (max(0, cache_read_tokens) / 1_000_000) * pricing.cache_read
-    return input_cost + output_cost + cache_read_cost
+    cache_write_cost = (max(0, cache_write_tokens) / 1_000_000) * pricing.cache_write
+    web_search_cost = max(0, web_search_requests) * pricing.web_search
+    return input_cost + output_cost + cache_read_cost + cache_write_cost + web_search_cost
 
 
 def canonical_model_keys(model: str) -> list[str]:
@@ -222,10 +229,13 @@ def load_pricing_lookup() -> PricingLookup:
                     input=float(val.get("input", 0) or 0),
                     output=float(val.get("output", 0) or 0),
                     cache_read=float(val.get("cacheRead", val.get("cache_read", 0)) or 0),
+                    cache_write=float(val.get("cacheWrite", val.get("cache_write", 0)) or 0),
+                    web_search=float(val.get("webSearch", val.get("web_search", 0)) or 0),
+                    fast_multiplier=float(val.get("fastMultiplier", val.get("fast_multiplier", 1)) or 1),
                 )
-            data.setdefault("default", ModelPricing(input=1.0, output=3.0, cache_read=0.0))
+            data.setdefault("default", ModelPricing(input=1.0, output=3.0, cache_read=0.0, cache_write=0.0, web_search=0.0, fast_multiplier=1.0))
             return PricingLookup(data)
         except Exception:
             continue
 
-    return PricingLookup({"default": ModelPricing(input=1.0, output=3.0, cache_read=0.0)})
+    return PricingLookup({"default": ModelPricing(input=1.0, output=3.0, cache_read=0.0, cache_write=0.0, web_search=0.0, fast_multiplier=1.0)})

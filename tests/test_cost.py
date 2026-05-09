@@ -11,12 +11,14 @@ def test_calculate_cost_summary_components() -> None:
         output_tokens=500_000,
         reasoning_tokens=500_000,
         cache_read_tokens=1_000_000,
+        cache_write_tokens=1_000_000,
+        web_search_requests=2,
         api_calls=1,
         total_cost=2.0,
     )
     lookup = PricingLookup(
         {
-            "gpt-5": ModelPricing(input=2.0, output=8.0, cache_read=0.5),
+            "gpt-5": ModelPricing(input=2.0, output=8.0, cache_read=0.5, cache_write=2.5, web_search=0.01),
             "default": ModelPricing(input=1.0, output=3.0, cache_read=0.0),
         }
     )
@@ -27,7 +29,9 @@ def test_calculate_cost_summary_components() -> None:
     assert summary.estimated_input_cost == 2.0
     assert summary.estimated_output_cost == 8.0
     assert summary.estimated_cache_read_cost == 0.5
-    assert summary.estimated_session_cost == 10.5
+    assert summary.estimated_cache_write_cost == 2.5
+    assert summary.estimated_web_search_cost == 0.02
+    assert summary.estimated_session_cost == 13.02
     assert summary.is_subscription is False
 
 
