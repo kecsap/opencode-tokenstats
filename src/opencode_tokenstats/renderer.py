@@ -104,10 +104,11 @@ def _color_bar(value: int, max_value: int, color: str, width: int = 12) -> Text:
 
 def _build_composition_table(token_composition: dict[str, int], total_tokens: int) -> Table:
     """Build a Token Composition table with bars and colors."""
-    comp = Table(show_header=False, box=None, padding=(0, 0, 0, 1))
-    comp.add_column("Component", style="bold")
-    comp.add_column("Bar", justify="left")
+    comp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+    comp.add_column("", style="bold")
+    comp.add_column("", justify="left")
     comp.add_column("Tokens", justify="right", style="dim")
+    comp.add_column("%", justify="right", style="dim")
 
     # Color mapping for components
     color_map = {
@@ -122,11 +123,12 @@ def _build_composition_table(token_composition: dict[str, int], total_tokens: in
     for key, value in token_composition.items():
         color = color_map.get(key, COL_TOTAL)
         bar_text = _color_bar(value, max_val, color, width=10)
-        comp.add_row(key, bar_text, _fmt_int(value))
+        pct = value / total_tokens * 100 if total_tokens else 0
+        comp.add_row(key, bar_text, _fmt_int(value), f"{pct:.1f}")
 
     # Add total row
-    comp.add_row("", "", "")
-    comp.add_row("Total", _color_bar(total_tokens, total_tokens, COL_TOTAL, width=10), _fmt_int(total_tokens))
+    comp.add_row("", "", "", "")
+    comp.add_row("total", _color_bar(total_tokens, total_tokens, COL_TOTAL, width=10), _fmt_int(total_tokens), "100.0")
 
     return comp
 
