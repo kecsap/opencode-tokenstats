@@ -40,4 +40,4 @@ def test_pipeline_is_not_text_report_dependent() -> None:
     # need textual sections. It does not: structured message payload is enough.
     assert metric.api_calls == 1
     assert metric.session_total_tokens == 184
-    assert metric.model == "gpt-5.3-codex"
+    assert metric.model == "openai/gpt-5.3-codex"

@@ -58,7 +58,7 @@
   "projects": [],
   "models": [
     {
-      "model": "gpt-5.3-codex",
+      "model": "openai/gpt-5.3-codex",
       "api_cost": 0.012
     }
   ]

@@ -20,9 +20,9 @@ def test_multi_provider_fixture_coverage() -> None:
     m2 = build_canonical_metrics("s-anthropic", _load("session_messages_api_sample_anthropic.json"))
     m3 = build_canonical_metrics("s-openai-zero", _load("session_messages_api_sample_openai_zero_cost.json"))
 
-    assert m1.model == "gpt-5.3-codex"
-    assert m2.model == "claude-sonnet-4"
-    assert m3.model == "gpt-5.3-codex"
+    assert m1.model == "openai/gpt-5.3-codex"
+    assert m2.model == "anthropic/claude-sonnet-4"
+    assert m3.model == "openai/gpt-5.3-codex"
 
     assert any(r["component_type"] == "skill" for r in m2.component_rows)
     assert any(r["component_type"] == "subagent" for r in m2.component_rows)

@@ -73,3 +73,21 @@ def test_canonical_metrics_extracts_skill_and_subagent_components() -> None:
     for row in out.component_rows:
         if row["component_type"] in {"skill", "subagent"}:
             assert row["estimated_session_tokens"] == row["tokens"] * out.api_calls
+
+
+def test_model_includes_provider_prefix() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "providerID": "azure",
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+            },
+            "parts": [{"type": "text", "text": "ok"}],
+        }
+    ]
+
+    out = build_canonical_metrics("s3", messages)
+    assert out.model == "azure/gpt-5.3-codex"

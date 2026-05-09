@@ -904,13 +904,19 @@ def _extract_model_id_from_message(message: dict[str, object]) -> str:
     info = message.get("info")
     if isinstance(info, dict):
         model_id = info.get("modelID")
+        provider_id = info.get("providerID")
         if isinstance(model_id, str) and model_id:
+            if isinstance(provider_id, str) and provider_id:
+                return f"{provider_id}/{model_id}"
             return model_id
         model = info.get("model")
         if isinstance(model, dict):
-            nested = model.get("modelID")
-            if isinstance(nested, str) and nested:
-                return nested
+            nested_model_id = model.get("modelID")
+            nested_provider_id = model.get("providerID")
+            if isinstance(nested_model_id, str) and nested_model_id:
+                if isinstance(nested_provider_id, str) and nested_provider_id:
+                    return f"{nested_provider_id}/{nested_model_id}"
+                return nested_model_id
     return "unknown"
 
 
