@@ -359,3 +359,41 @@ def test_skill_call_grouping_in_family() -> None:
     svelte_family = [r for r in out.component_family_rows if r["component_group"] == "svelte"]
     assert len(svelte_family) == 1
     assert svelte_family[0]["calls"] == 2
+
+
+def test_skill_calls_excluded_from_mcp_insights() -> None:
+    """Test that skill calls are not included in MCP Insights."""
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {
+                        "status": "completed",
+                        "input": {"name": "caveman"},
+                        "output": "skill loaded",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "lean-ctx_ctx_read",
+                    "state": {"status": "completed", "output": "file content"},
+                },
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-mcp", messages)
+
+    # MCP rows should only contain lean-ctx, not caveman skill
+    mcp_names = {r["name"] for r in out.mcp_rows}
+    assert "lean-ctx" in mcp_names
+    assert "caveman" not in mcp_names

@@ -131,9 +131,13 @@ The Model Costs table shows both API costs (from telemetry) and estimated costs 
 
 ## Component Contribution
 
-The Component Contribution table groups tools by component family (e.g., `lean-ctx`, `jcodemunch`, `codegraph2`). Each row aggregates all tools within the same family, showing combined token usage and call counts.
+The Component Contribution table groups all calls by component family (e.g., `lean-ctx`, `jcodemunch`, `codegraph2`). Each row aggregates all calls within the same family, showing combined token usage and call counts.
 
 **Skill calls:** When a skill is loaded via the `skill` tool, the call is attributed to the specific skill name (e.g., `caveman`, `impeccable`) rather than a generic "skill" entry. Skills are grouped with tools sharing the same component group (e.g., a `svelte` skill call groups with `svelte_*` tools under the `svelte` family).
+
+## MCP Insights
+
+The MCP Insights table shows only MCP server tool calls. Skill calls are excluded because skills are loaded from markdown files, not MCP servers. This table provides a narrower view focused on external tool dependencies.
 
 ## Model Aliases (models.conf)
 
