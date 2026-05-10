@@ -910,19 +910,22 @@ def _finalize_component_stats(component_map: dict[str, float]) -> dict[str, obje
 
 
 def _finalize_core_stats(core_map: dict[str, float]) -> dict[str, object]:
-    rows: list[dict[str, object]] = []
+    normalized: dict[str, float] = defaultdict(float)
     for name, tokens in core_map.items():
+        target = "general" if name == "invalid" else name
+        normalized[target] += float(tokens)
+
+    rows: list[dict[str, object]] = []
+    for name, tokens in normalized.items():
         t = int(tokens)
         rows.append(
             {
                 "component_name": name,
                 "tokens": t,
-                "estimated_session_tokens": t,
-                "calls": 0,
             }
         )
     rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
-    return {"rows": rows, "total_tokens": int(sum(core_map.values()))}
+    return {"rows": rows, "total_tokens": int(sum(normalized.values()))}
 
 
 def _finalize_component_stats_canonical(component_map: dict[str, float], *, core_tokens: float = 0.0) -> dict[str, object]:
@@ -946,8 +949,6 @@ def _finalize_component_stats_canonical(component_map: dict[str, float], *, core
                 "component_type": ctype,
                 "component_group": cgroup,
                 "tokens": t,
-                "estimated_session_tokens": t,
-                "calls": 0,
                 "percent": round((tokens / total * 100.0), 2) if total > 0 else 0.0,
             }
         )
@@ -959,8 +960,6 @@ def _finalize_component_stats_canonical(component_map: dict[str, float], *, core
                 "component_type": "core",
                 "component_group": "opencode-core",
                 "tokens": t,
-                "estimated_session_tokens": t,
-                "calls": 0,
                 "percent": round((core_tokens / total * 100.0), 2) if total > 0 else 0.0,
             }
         )

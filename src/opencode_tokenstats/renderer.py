@@ -254,14 +254,10 @@ def print_session_report(
         oc = Table(show_header=True, box=None)
         oc.add_column("Name", style="bold")
         oc.add_column("Tokens", justify="right")
-        oc.add_column("Est.Session", justify="right")
-        oc.add_column("Calls", justify="right")
         for row in core_stats["rows"]:
             oc.add_row(
                 str(row.get("component_name")),
                 _fmt_int(row.get("tokens")),
-                _fmt_int(row.get("estimated_session_tokens")),
-                _fmt_int(row.get("calls", 0)),
             )
         console.print(Panel(oc, title="OpenCode Contribution", border_style=COL_ORANGE))
 
@@ -270,16 +266,12 @@ def print_session_report(
         ct.add_column("Type")
         ct.add_column("Group")
         ct.add_column("Tokens", justify="right")
-        ct.add_column("Est.Session", justify="right")
-        ct.add_column("Calls", justify="right")
         ct.add_column("%", justify="right")
         for row in component_stats["rows"]:
             ct.add_row(
                 str(row.get("component_type")),
                 str(row.get("component_group")),
                 _fmt_int(row.get("tokens")),
-                _fmt_int(row.get("estimated_session_tokens")),
-                _fmt_int(row.get("calls", 0)),
                 _fmt_float(row.get("percent")),
             )
         console.print(Panel(ct, title="Component Contribution", border_style=COL_MAGENTA))
@@ -403,14 +395,10 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         oc = Table(show_header=True, box=None)
         oc.add_column("Name", style="bold")
         oc.add_column("Tokens", justify="right")
-        oc.add_column("Est.Session", justify="right")
-        oc.add_column("Calls", justify="right")
         for row in core_stats["rows"]:
             oc.add_row(
                 str(row.get("component_name")),
                 _fmt_int(row.get("tokens")),
-                _fmt_int(row.get("estimated_session_tokens")),
-                _fmt_int(row.get("calls", 0)),
             )
         panels.append(Panel(oc, title="OpenCode Contribution", border_style=COL_ORANGE))
 
@@ -419,16 +407,12 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         ct.add_column("Type")
         ct.add_column("Group")
         ct.add_column("Tokens", justify="right")
-        ct.add_column("Est.Session", justify="right")
-        ct.add_column("Calls", justify="right")
         ct.add_column("%", justify="right")
         for row in component_stats["rows"]:
             ct.add_row(
                 str(row.get("component_type")),
                 str(row.get("component_group")),
                 _fmt_int(row.get("tokens")),
-                _fmt_int(row.get("estimated_session_tokens")),
-                _fmt_int(row.get("calls", 0)),
                 _fmt_float(row.get("percent")),
             )
         panels.append(Panel(ct, title="Component Contribution", border_style=COL_MAGENTA))
