@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from opencode_tokenstats.canonical_metrics import build_canonical_metrics, _build_component_family_rows
+from opencode_tokenstats.content_attribution import collect_content_attribution
 
 
 def test_build_canonical_metrics_basic_semantics() -> None:
@@ -268,3 +269,93 @@ def test_component_family_rows_in_canonical_metrics() -> None:
     assert len(lean_ctx_family) == 1
     assert lean_ctx_family[0]["calls"] == 2
     assert lean_ctx_family[0]["tokens"] > 0
+
+
+def test_skill_call_attribution() -> None:
+    """Test that skill tool calls are attributed to the correct skill component."""
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {
+                        "status": "completed",
+                        "input": {"name": "caveman"},
+                        "output": "skill loaded",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {
+                        "status": "completed",
+                        "input": {"name": "impeccable"},
+                        "output": "skill loaded",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "lean-ctx_ctx_read",
+                    "state": {"status": "completed", "output": "file content"},
+                },
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-skill", messages)
+
+    # Skill calls should be attributed with component_type "skill"
+    skill_rows = [r for r in out.component_rows if r["component_type"] == "skill"]
+    skill_names = {r["component_name"] for r in skill_rows}
+    assert "caveman" in skill_names
+    assert "impeccable" in skill_names
+
+    # Tool calls should be attributed with component_type "tool"
+    tool_rows = [r for r in out.component_rows if r["component_type"] == "tool"]
+    assert any(r["component_name"] == "lean-ctx_ctx_read" for r in tool_rows)
+
+
+def test_skill_call_grouping_in_family() -> None:
+    """Test that skill calls are grouped with tools in the same family."""
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {
+                        "status": "completed",
+                        "input": {"name": "svelte"},
+                        "output": "svelte skill",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "svelte_list-sections",
+                    "state": {"status": "completed", "output": "sections"},
+                },
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-svelte", messages)
+
+    # Both skill and tool should be grouped under "svelte"
+    svelte_family = [r for r in out.component_family_rows if r["component_group"] == "svelte"]
+    assert len(svelte_family) == 1
+    assert svelte_family[0]["calls"] == 2

@@ -60,7 +60,7 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
         )
         component_rows.append(
             {
-                "component_type": "tool",
+                "component_type": "skill" if t.is_skill else "tool",
                 "component_group": group,
                 "component_name": t.tool_name,
                 "tokens": int(t.output_tokens),
