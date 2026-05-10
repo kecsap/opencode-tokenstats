@@ -130,9 +130,9 @@ def _build_composition_table(token_composition: dict[str, int], total_tokens: in
         pct = value / total_tokens * 100 if total_tokens else 0
         comp.add_row(key, bar_text, _fmt_int(value), f"{pct:.1f}")
 
-    # Add total row
+    # Add total row (no bar)
     comp.add_row("", "", "", "")
-    comp.add_row("total", _color_bar(total_tokens, total_tokens, COL_TOTAL, width=10), _fmt_int(total_tokens), "100.0")
+    comp.add_row("total", "", _fmt_int(total_tokens), "100.0")
 
     return comp
 
@@ -207,14 +207,19 @@ def print_session_report(
         console.print(Panel(tt, title="Top Tools", border_style=COL_GOLD))
 
     if model_costs:
-        mt = Table(show_header=True, box=None)
-        mt.add_column("Model")
-        mt.add_column("Cost (API)", justify="right")
-        mt.add_column("Cost (Est)", justify="right")
+        mt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        mt.add_column("", style="bold", justify="left")
+        mt.add_column("", justify="left")
+        mt.add_column("API", justify="right")
+        mt.add_column("Estimated", justify="right")
+        max_api_cost = max((float(item.get("api_cost", 0)) for item in model_costs), default=1) or 1
         for item in model_costs[:12]:
+            api_cost = float(item.get("api_cost", 0))
+            bar_text = _color_bar(api_cost, max_api_cost, COL_GREEN, width=10)
             mt.add_row(
                 str(item.get("model")),
-                _fmt_float(item.get("api_cost")),
+                bar_text,
+                _fmt_float(api_cost),
                 _fmt_float(item.get("estimated_cost")),
             )
         console.print(Panel(mt, title="Model Costs", border_style=COL_GREEN))
@@ -301,6 +306,8 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
 
     # Build Period Summary table (without Tokens - moved to composition)
     summary_table = Table(show_header=False, box=None)
+    summary_table.add_column(style="bold", justify="left")
+    summary_table.add_column(justify="left")
     summary_table.add_row("Window", label)
     summary_table.add_row("Sessions", _fmt_int(report["sessions"]))
     summary_table.add_row("API calls", _fmt_int(report["api_calls"]))
@@ -317,14 +324,19 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     # Build Model Costs panel
     model_costs = report.get("model_costs")
     if isinstance(model_costs, list) and model_costs:
-        mt = Table(show_header=True, box=None)
-        mt.add_column("Model")
-        mt.add_column("Cost (API)", justify="right")
-        mt.add_column("Cost (Est)", justify="right")
+        mt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        mt.add_column("", style="bold", justify="left")
+        mt.add_column("", justify="left")
+        mt.add_column("API", justify="right")
+        mt.add_column("Estimated", justify="right")
+        max_api_cost = max((float(item.get("api_cost", 0)) for item in model_costs), default=1) or 1
         for item in model_costs[:12]:
+            api_cost = float(item.get("api_cost", 0))
+            bar_text = _color_bar(api_cost, max_api_cost, COL_GREEN, width=10)
             mt.add_row(
                 str(item.get("model")),
-                _fmt_float(item.get("api_cost")),
+                bar_text,
+                _fmt_float(api_cost),
                 _fmt_float(item.get("estimated_cost")),
             )
         model_costs_panel = Panel(mt, title="Model Costs", border_style=COL_GREEN)
@@ -341,16 +353,12 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         console.print(left_group)
 
     top_tools = report.get("top_tools")
-    if isinstance(top_tools, list) and top_tools:
-        tt = Table(show_header=True, box=None)
-        tt.add_column("Tool")
-        tt.add_column("Output Tokens", justify="right")
-        tt.add_column("Calls", justify="right")
-        for item in top_tools:
-            tt.add_row(str(item.get("name")), _fmt_int(item.get("output_tokens")), _fmt_int(item.get("call_count")))
-        console.print(Panel(tt, title="Top Tools", border_style=COL_GOLD))
-
     mcp_stats = report.get("mcp_stats")
+    component_stats = report.get("component_stats")
+
+    # Build panels for MCP Insights, Component Contribution, Top Tools
+    panels = []
+
     if isinstance(mcp_stats, dict) and mcp_stats.get("rows"):
         mcp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
         mcp.add_column("", style="bold")
@@ -372,9 +380,8 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_int(row.get("calls")),
                 _fmt_float(row.get("tokens_per_call")),
             )
-        console.print(Panel(mcp, title="MCP Insights", border_style=COL_CYAN))
+        panels.append(Panel(mcp, title="MCP Insights", border_style=COL_CYAN))
 
-    component_stats = report.get("component_stats")
     if isinstance(component_stats, dict) and component_stats.get("rows"):
         ct = Table(show_header=True, box=None)
         ct.add_column("Type")
@@ -394,7 +401,20 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_int(row.get("calls", 0)),
                 _fmt_float(row.get("percent")),
             )
-        console.print(Panel(ct, title="Component Contribution", border_style=COL_MAGENTA))
+        panels.append(Panel(ct, title="Component Contribution", border_style=COL_MAGENTA))
+
+    if isinstance(top_tools, list) and top_tools:
+        tt = Table(show_header=True, box=None)
+        tt.add_column("Tool")
+        tt.add_column("Output Tokens", justify="right")
+        tt.add_column("Calls", justify="right")
+        for item in top_tools:
+            tt.add_row(str(item.get("name")), _fmt_int(item.get("output_tokens")), _fmt_int(item.get("call_count")))
+        panels.append(Panel(tt, title="Top Tools", border_style=COL_GOLD))
+
+    # Print all three panels in one row
+    if panels:
+        console.print(Columns(panels, equal=False, padding=0))
 
     contributor_stats = report.get("contributor_stats")
     if isinstance(contributor_stats, dict) and contributor_stats.get("rows"):
