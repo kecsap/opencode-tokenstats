@@ -362,6 +362,79 @@ def test_skill_call_grouping_in_family() -> None:
     assert svelte_family[0]["calls"] == 2
 
 
+def test_skill_family_preserves_single_hyphenated_skill_name() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {
+                        "status": "completed",
+                        "input": {"name": "implement-slice"},
+                        "output": "skill loaded",
+                    },
+                },
+            ],
+        }
+    ]
+
+    out = build_canonical_metrics("s-skill-hyphen-single", messages)
+
+    family_names = {r["component_group"] for r in out.component_family_rows}
+    assert "implement-slice" in family_names
+    assert "implement" not in family_names
+
+
+def test_skill_family_merges_multiple_hyphenated_skills_with_same_prefix() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {
+                        "status": "completed",
+                        "input": {"name": "implement-slice"},
+                        "output": "slice loaded",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {
+                        "status": "completed",
+                        "input": {"name": "implement-plan"},
+                        "output": "plan loaded",
+                    },
+                },
+            ],
+        }
+    ]
+
+    out = build_canonical_metrics("s-skill-hyphen-multi", messages)
+
+    implement_family = [r for r in out.component_family_rows if r["component_group"] == "implement"]
+    assert len(implement_family) == 1
+    assert implement_family[0]["calls"] == 2
+
+
 def test_skill_calls_excluded_from_mcp_insights() -> None:
     """Test that skill calls are not included in MCP Insights."""
     messages = [
@@ -516,7 +589,8 @@ def test_additional_core_components_classification() -> None:
 
     core_names = {r["component_name"] for r in out.core_rows}
     assert "webfetch" in core_names
-    assert "invalid" in core_names
+    assert "general" in core_names
+    assert "invalid" not in core_names
     assert "plan" in core_names
     assert "implement" in core_names
 

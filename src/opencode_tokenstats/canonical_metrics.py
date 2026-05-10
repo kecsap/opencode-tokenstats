@@ -241,7 +241,7 @@ def _resolve_component_info(
     if is_skill and tool_name in _CORE_OPENCODE_SKILLS:
         return ("core", "opencode-core")
     if is_skill:
-        return ("skill", _component_group(tool_name))
+        return ("skill", tool_name)
     if is_subagent and tool_name in _CORE_OPENCODE_SUBAGENTS:
         return ("core", "opencode-core")
     if is_subagent:
@@ -266,6 +266,7 @@ _CORE_OPENCODE_SUBAGENTS = {"explore", "general"}
 
 
 def _build_component_family_rows(component_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    _normalize_skill_component_groups(component_rows)
     grouped: dict[str, dict[str, Any]] = {}
     for row in component_rows:
         group = str(row["component_group"])
@@ -305,6 +306,8 @@ def _build_core_rows(component_rows: list[dict[str, Any]]) -> list[dict[str, Any
         if row.get("component_group") != "opencode-core":
             continue
         name = str(row.get("component_name"))
+        if name == "invalid":
+            name = "general"
         if name not in grouped:
             grouped[name] = {
                 "component_type": "core",
@@ -321,6 +324,36 @@ def _build_core_rows(component_rows: list[dict[str, Any]]) -> list[dict[str, Any
     rows = list(grouped.values())
     rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
     return rows
+
+
+def _normalize_skill_component_groups(component_rows: list[dict[str, Any]]) -> None:
+    skill_prefix_counts: dict[str, int] = {}
+    for row in component_rows:
+        if row.get("component_type") != "skill":
+            continue
+        name = str(row.get("component_name", ""))
+        if "-" not in name:
+            continue
+        prefix = name.split("-", 1)[0]
+        if not prefix:
+            continue
+        skill_prefix_counts[prefix] = skill_prefix_counts.get(prefix, 0) + 1
+
+    if not skill_prefix_counts:
+        return
+
+    for row in component_rows:
+        if row.get("component_type") != "skill":
+            continue
+        name = str(row.get("component_name", ""))
+        if "-" not in name:
+            row["component_group"] = name
+            continue
+        prefix = name.split("-", 1)[0]
+        if prefix and skill_prefix_counts.get(prefix, 0) > 1:
+            row["component_group"] = prefix
+        else:
+            row["component_group"] = name
 
 
 def _build_mcp_rows(tool_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

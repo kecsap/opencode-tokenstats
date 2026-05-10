@@ -133,13 +133,13 @@ The Model Costs table shows both API costs (from telemetry) and estimated costs 
 
 The Component Contribution table groups all calls by component family (e.g., `lean-ctx`, `jcodemunch`, `codegraph2`). Each row aggregates all calls within the same family, showing combined token usage and call counts. It also includes an aggregate row for OpenCode core usage: `type=core`, `group=opencode-core`.
 
-**Skill calls:** When a skill is loaded via the `skill` tool, the call is attributed to the specific skill name (e.g., `caveman`, `impeccable`) rather than a generic "skill" entry. Skills are grouped with tools sharing the same component group (e.g., a `svelte` skill call groups with `svelte_*` tools under the `svelte` family).
+**Skill calls:** When a skill is loaded via the `skill` tool, the call is attributed to the specific skill name (e.g., `caveman`, `impeccable`) rather than a generic "skill" entry. Hyphenated skill names are preserved as-is unless multiple skills share the same prefix (e.g., `implement-slice` and `implement-plan` merge under `implement`), and non-hyphenated skill names still group naturally with matching tool families (e.g., `svelte` with `svelte_*` tools).
 
 **Subagent calls:** When a subagent is launched via the `task` tool, the call is attributed to the specific subagent type (e.g., `explore`, `general`) rather than a generic "task" entry. Subagents are grouped with tools sharing the same component group.
 
 ## OpenCode Contribution
 
-The OpenCode Contribution table shows core OpenCode tools and built-in components (`read`, `bash`, `grep`, `glob`, `todowrite`, `apply_patch`, `webfetch`, `invalid`, core skills like `plan`/`implement`, and core subagents like `explore`/`general`). These are internal tools that are not MCP server calls, shown separately from external component contributions.
+The OpenCode Contribution table shows core OpenCode tools and built-in components (`read`, `bash`, `grep`, `glob`, `todowrite`, `apply_patch`, `webfetch`, core skills like `plan`/`implement`, and core subagents like `explore`/`general`). `invalid` tool rows are merged into `general` in this table. These are internal tools that are not MCP server calls, shown separately from external component contributions.
 
 ## MCP Insights
 
