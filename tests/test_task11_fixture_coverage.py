@@ -25,7 +25,7 @@ def test_multi_provider_fixture_coverage() -> None:
     assert m3.model == "openai/gpt-5.3-codex"
 
     assert any(r["component_type"] == "skill" for r in m2.component_rows)
-    assert any(r["component_type"] == "subagent" for r in m2.component_rows)
+    assert any(r["component_type"] == "core" for r in m2.component_rows)  # explore/general are core subagents
 
     assert m3.actual_cost_usd == 0.0
     assert m3.estimated_cost_usd > 0.0

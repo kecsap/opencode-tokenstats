@@ -65,14 +65,15 @@ def test_canonical_metrics_extracts_skill_and_subagent_components() -> None:
     ]
 
     out = build_canonical_metrics("s2", messages)
+    # explore and general are core subagents, classified as "core" type
     names = {(r["component_type"], r["component_name"]) for r in out.component_rows}
     assert ("skill", "caveman") in names
-    assert ("subagent", "explore") in names
-    assert ("subagent", "general") in names
+    assert ("core", "explore") in names
+    assert ("core", "general") in names
 
     # skill/subagent estimated session burden = raw tokens * api_calls
     for row in out.component_rows:
-        if row["component_type"] in {"skill", "subagent"}:
+        if row["component_type"] in {"skill", "core"}:
             assert row["estimated_session_tokens"] == row["tokens"] * out.api_calls
 
 
@@ -440,11 +441,11 @@ def test_subagent_call_attribution() -> None:
     ]
     out = build_canonical_metrics("s-subagent", messages)
 
-    # Subagent calls should be attributed with component_type "subagent"
-    subagent_rows = [r for r in out.component_rows if r["component_type"] == "subagent"]
-    subagent_names = {r["component_name"] for r in subagent_rows}
-    assert "explore" in subagent_names
-    assert "general" in subagent_names
+    # explore and general are core subagents, attributed with component_type "core"
+    core_rows = [r for r in out.component_rows if r["component_type"] == "core"]
+    core_names = {r["component_name"] for r in core_rows}
+    assert "explore" in core_names
+    assert "general" in core_names
 
     # Tool calls should be attributed with component_type "tool"
     tool_rows = [r for r in out.component_rows if r["component_type"] == "tool"]
@@ -487,3 +488,42 @@ def test_subagent_calls_excluded_from_mcp_insights() -> None:
     mcp_names = {r["name"] for r in out.mcp_rows}
     assert "lean-ctx" in mcp_names
     assert "explore" not in mcp_names
+
+
+def test_additional_core_components_classification() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": """
+<available_skills>
+  <skill><name>plan</name><description>Planner skill.</description></skill>
+  <skill><name>implement</name><description>Implementor skill.</description></skill>
+</available_skills>
+""",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {"type": "tool", "tool": "webfetch", "state": {"status": "completed", "output": "html"}},
+                {"type": "tool", "tool": "invalid", "state": {"status": "completed", "output": "oops"}},
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-core-extra", messages)
+
+    core_names = {r["component_name"] for r in out.core_rows}
+    assert "webfetch" in core_names
+    assert "invalid" in core_names
+    assert "plan" in core_names
+    assert "implement" in core_names
+
+    family = [r for r in out.component_family_rows if r["component_group"] == "opencode-core"]
+    assert len(family) == 1
+    assert family[0]["component_type"] == "core"
+
+    mcp_names = {r["name"] for r in out.mcp_rows}
+    assert "webfetch" not in mcp_names
+    assert "invalid" not in mcp_names

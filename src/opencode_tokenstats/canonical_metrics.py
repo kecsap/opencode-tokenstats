@@ -28,6 +28,7 @@ class CanonicalMetrics:
     token_composition: dict[str, int]
     component_rows: list[dict[str, Any]]
     component_family_rows: list[dict[str, Any]]
+    core_rows: list[dict[str, Any]]
     contributor_rows: list[dict[str, Any]]
     tool_rows: list[dict[str, Any]]
     mcp_rows: list[dict[str, Any]]
@@ -49,7 +50,8 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
     total_tool_tokens = sum(t.output_tokens for t in attribution.tool_usage)
     for t in attribution.tool_usage:
         percent = round((t.output_tokens / total_tool_tokens * 100.0), 2) if total_tool_tokens > 0 else 0.0
-        group = _component_group(t.tool_name)
+        is_core = t.tool_name in _CORE_OPENCODE_TOOLS
+        ctype, group = _resolve_component_info(t.tool_name, t.is_skill, t.is_subagent)
         tool_rows.append(
             {
                 "tool": t.tool_name,
@@ -58,11 +60,12 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
                 "calls": int(t.call_count),
                 "is_skill": t.is_skill,
                 "is_subagent": t.is_subagent,
+                "is_core": is_core,
             }
         )
         component_rows.append(
             {
-                "component_type": "skill" if t.is_skill else "subagent" if t.is_subagent else "tool",
+                "component_type": ctype,
                 "component_group": group,
                 "component_name": t.tool_name,
                 "tokens": int(t.output_tokens),
@@ -74,22 +77,26 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
     skill_rows = _extract_available_skills(messages)
     subagent_rows = _extract_available_subagents(messages)
     for row in skill_rows:
+        sname = row["name"]
+        sctype, sgroup = _resolve_component_info(sname, True, False)
         component_rows.append(
             {
-                "component_type": "skill",
-                "component_group": _component_group(row["name"]),
-                "component_name": row["name"],
+                "component_type": sctype,
+                "component_group": sgroup,
+                "component_name": sname,
                 "tokens": row["tokens"],
                 "estimated_session_tokens": row["tokens"] * telemetry.api_calls,
                 "calls": 0,
             }
         )
     for row in subagent_rows:
+        sname = row["name"]
+        sctype, sgroup = _resolve_component_info(sname, False, True)
         component_rows.append(
             {
-                "component_type": "subagent",
-                "component_group": _component_group(row["name"]),
-                "component_name": row["name"],
+                "component_type": sctype,
+                "component_group": sgroup,
+                "component_name": sname,
                 "tokens": row["tokens"],
                 "estimated_session_tokens": row["tokens"] * telemetry.api_calls,
                 "calls": 0,
@@ -123,6 +130,8 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
         "web_search_requests": telemetry.web_search_requests,
     }
 
+    core_rows = _build_core_rows(component_rows)
+
     return CanonicalMetrics(
         session_id=session_id,
         model=model,
@@ -137,6 +146,7 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
         token_composition=token_composition,
         component_rows=component_rows,
         component_family_rows=component_family_rows,
+        core_rows=core_rows,
         contributor_rows=contributor_rows[:10],
         tool_rows=tool_rows,
         mcp_rows=mcp_rows,
@@ -223,7 +233,36 @@ def _component_group(name: str) -> str:
     return name
 
 
+def _resolve_component_info(
+    tool_name: str, is_skill: bool, is_subagent: bool
+) -> tuple[str, str]:
+    if tool_name in _CORE_OPENCODE_TOOLS:
+        return ("core", "opencode-core")
+    if is_skill and tool_name in _CORE_OPENCODE_SKILLS:
+        return ("core", "opencode-core")
+    if is_skill:
+        return ("skill", _component_group(tool_name))
+    if is_subagent and tool_name in _CORE_OPENCODE_SUBAGENTS:
+        return ("core", "opencode-core")
+    if is_subagent:
+        return ("subagent", _component_group(tool_name))
+    return ("tool", _component_group(tool_name))
+
+
 _LOCAL_TOOL_RE = re.compile(r"^(read|bash|glob|todowrite|task|tokenscope|apply_patch|skill)$")
+_CORE_OPENCODE_TOOLS = {
+    "read",
+    "bash",
+    "grep",
+    "glob",
+    "todowrite",
+    "apply_patch",
+    "apply",
+    "webfetch",
+    "invalid",
+}
+_CORE_OPENCODE_SKILLS = {"plan", "implement"}
+_CORE_OPENCODE_SUBAGENTS = {"explore", "general"}
 
 
 def _build_component_family_rows(component_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -260,14 +299,38 @@ def _build_component_family_rows(component_rows: list[dict[str, Any]]) -> list[d
     return out
 
 
+def _build_core_rows(component_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in component_rows:
+        if row.get("component_group") != "opencode-core":
+            continue
+        name = str(row.get("component_name"))
+        if name not in grouped:
+            grouped[name] = {
+                "component_type": "core",
+                "component_group": "opencode-core",
+                "component_name": name,
+                "tokens": 0,
+                "estimated_session_tokens": 0,
+                "calls": 0,
+            }
+        g = grouped[name]
+        g["tokens"] += int(row.get("tokens", 0))
+        g["estimated_session_tokens"] += int(row.get("estimated_session_tokens", 0))
+        g["calls"] += int(row.get("calls", 0))
+    rows = list(grouped.values())
+    rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
+    return rows
+
+
 def _build_mcp_rows(tool_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, float]] = {}
     for row in tool_rows:
         tool = str(row["tool"])
         if _LOCAL_TOOL_RE.match(tool):
             continue
-        # Exclude skill and subagent calls from MCP Insights - they are not MCP tools
-        if row.get("is_skill") or row.get("is_subagent"):
+        # Exclude skill/subagent/core calls from MCP Insights - they are not MCP tools
+        if row.get("is_skill") or row.get("is_subagent") or row.get("is_core"):
             continue
         group = _component_group(tool)
         if group not in grouped:

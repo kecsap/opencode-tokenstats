@@ -286,6 +286,7 @@ def session(ctx: click.Context, session_id: str | None) -> None:
         for t in canonical.tool_rows[:10]
     ]
     mcp_stats = {"rows": canonical.mcp_rows, "total_tokens": sum(r["tokens"] for r in canonical.mcp_rows)}
+    core_stats = {"rows": canonical.core_rows, "total_tokens": sum(r["tokens"] for r in canonical.core_rows)}
     component_stats = {"rows": canonical.component_family_rows, "total_tokens": sum(r["tokens"] for r in canonical.component_family_rows)}
     contributor_stats = {
         "rows": canonical.contributor_rows,
@@ -307,6 +308,7 @@ def session(ctx: click.Context, session_id: str | None) -> None:
         token_composition=canonical.token_composition,
         top_tools=top_tools,
         mcp_stats=mcp_stats,
+        core_stats=core_stats,
         component_stats=component_stats,
         contributor_stats=contributor_stats,
         model_costs=model_costs,
@@ -530,6 +532,7 @@ def _build_period_report(
     tool_map: dict[str, dict[str, int]] = defaultdict(lambda: {"output_tokens": 0, "call_count": 0})
     mcp_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
     component_map: dict[str, float] = defaultdict(float)
+    core_map: dict[str, float] = defaultdict(float)
     contributor_map: dict[str, float] = defaultdict(float)
     aliases = load_model_aliases(options.get("model_alias_file"))
     model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0})
@@ -548,7 +551,10 @@ def _build_period_report(
             mcp_map[str(r["name"])]["tokens"] += float(r["tokens"])
             mcp_map[str(r["name"])]["calls"] += float(r["calls"])
         for r in canonical.component_rows:
-            component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"] += float(r["tokens"])
+            if r["component_group"] == "opencode-core":
+                core_map[r["component_name"]] += float(r["tokens"])
+            else:
+                component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"] += float(r["tokens"])
         for row in canonical.contributor_rows:
             contributor_map[row["name"]] += float(row["tokens"])
         model_key = aliases.get(canonical.model, canonical.model)
@@ -578,7 +584,8 @@ def _build_period_report(
         "token_composition": token_composition,
         "top_tools": top_tools,
         "mcp_stats": _finalize_mcp_stats(mcp_map),
-        "component_stats": _finalize_component_stats_canonical(component_map),
+        "core_stats": _finalize_core_stats(core_map),
+        "component_stats": _finalize_component_stats_canonical(component_map, core_tokens=sum(core_map.values())),
         "contributor_stats": _finalize_contributor_stats(contributor_map),
         "model_costs": _finalize_model_costs(model_map),
     }
@@ -902,7 +909,23 @@ def _finalize_component_stats(component_map: dict[str, float]) -> dict[str, obje
     return {"rows": rows, "total_tokens": int(total)}
 
 
-def _finalize_component_stats_canonical(component_map: dict[str, float]) -> dict[str, object]:
+def _finalize_core_stats(core_map: dict[str, float]) -> dict[str, object]:
+    rows: list[dict[str, object]] = []
+    for name, tokens in core_map.items():
+        t = int(tokens)
+        rows.append(
+            {
+                "component_name": name,
+                "tokens": t,
+                "estimated_session_tokens": t,
+                "calls": 0,
+            }
+        )
+    rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
+    return {"rows": rows, "total_tokens": int(sum(core_map.values()))}
+
+
+def _finalize_component_stats_canonical(component_map: dict[str, float], *, core_tokens: float = 0.0) -> dict[str, object]:
     family: dict[str, float] = {}
     for key, tokens in component_map.items():
         parts = key.split("|", 2)
@@ -911,7 +934,7 @@ def _finalize_component_stats_canonical(component_map: dict[str, float]) -> dict
         family_key = f"{ctype}|{cgroup}"
         family[family_key] = family.get(family_key, 0.0) + tokens
 
-    total = sum(family.values())
+    total = sum(family.values()) + float(core_tokens)
     rows: list[dict[str, object]] = []
     for family_key, tokens in family.items():
         t = int(tokens)
@@ -929,6 +952,19 @@ def _finalize_component_stats_canonical(component_map: dict[str, float]) -> dict
             }
         )
     rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
+    if core_tokens > 0:
+        t = int(core_tokens)
+        rows.append(
+            {
+                "component_type": "core",
+                "component_group": "opencode-core",
+                "tokens": t,
+                "estimated_session_tokens": t,
+                "calls": 0,
+                "percent": round((core_tokens / total * 100.0), 2) if total > 0 else 0.0,
+            }
+        )
+        rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
     return {"rows": rows[:15], "total_tokens": int(total)}
 
 

@@ -163,6 +163,7 @@ def print_session_report(
     top_tools: list[dict[str, Any]] | None = None,
     mcp_stats: dict[str, Any] | None = None,
     component_stats: dict[str, Any] | None = None,
+    core_stats: dict[str, Any] | None = None,
     contributor_stats: dict[str, Any] | None = None,
     model_costs: list[dict[str, Any]] | None = None,
 ) -> None:
@@ -179,6 +180,8 @@ def print_session_report(
             print(f"Model Costs: {model_costs}")
         if mcp_stats:
             print(f"MCP Stats: {mcp_stats}")
+        if core_stats:
+            print(f"OpenCode Core: {core_stats}")
         if component_stats:
             print(f"Components: {component_stats}")
         if contributor_stats:
@@ -246,6 +249,21 @@ def print_session_report(
                 _fmt_float(row.get("tokens_per_call")),
             )
         console.print(Panel(mcp, title="MCP Insights", border_style=COL_CYAN))
+
+    if core_stats and core_stats.get("rows"):
+        oc = Table(show_header=True, box=None)
+        oc.add_column("Name", style="bold")
+        oc.add_column("Tokens", justify="right")
+        oc.add_column("Est.Session", justify="right")
+        oc.add_column("Calls", justify="right")
+        for row in core_stats["rows"]:
+            oc.add_row(
+                str(row.get("component_name")),
+                _fmt_int(row.get("tokens")),
+                _fmt_int(row.get("estimated_session_tokens")),
+                _fmt_int(row.get("calls", 0)),
+            )
+        console.print(Panel(oc, title="OpenCode Contribution", border_style=COL_ORANGE))
 
     if component_stats and component_stats.get("rows"):
         ct = Table(show_header=True, box=None)
@@ -352,9 +370,10 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
 
     top_tools = report.get("top_tools")
     mcp_stats = report.get("mcp_stats")
+    core_stats = report.get("core_stats")
     component_stats = report.get("component_stats")
 
-    # Build panels for MCP Insights, Component Contribution, Top Tools
+    # Build panels for MCP Insights, OpenCode Contribution, Component Contribution, Top Tools
     panels = []
 
     if isinstance(mcp_stats, dict) and mcp_stats.get("rows"):
@@ -379,6 +398,21 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_float(row.get("tokens_per_call")),
             )
         panels.append(Panel(mcp, title="MCP Insights", border_style=COL_CYAN))
+
+    if isinstance(core_stats, dict) and core_stats.get("rows"):
+        oc = Table(show_header=True, box=None)
+        oc.add_column("Name", style="bold")
+        oc.add_column("Tokens", justify="right")
+        oc.add_column("Est.Session", justify="right")
+        oc.add_column("Calls", justify="right")
+        for row in core_stats["rows"]:
+            oc.add_row(
+                str(row.get("component_name")),
+                _fmt_int(row.get("tokens")),
+                _fmt_int(row.get("estimated_session_tokens")),
+                _fmt_int(row.get("calls", 0)),
+            )
+        panels.append(Panel(oc, title="OpenCode Contribution", border_style=COL_ORANGE))
 
     if isinstance(component_stats, dict) and component_stats.get("rows"):
         ct = Table(show_header=True, box=None)
