@@ -129,6 +129,10 @@ The Model Costs table shows both API costs (from telemetry) and estimated costs 
 - **Cost (Est)**: Estimated cost based on token counts and pricing data
 - Primary cost uses API cost when available, falls back to estimated cost otherwise
 
+## Component Contribution
+
+The Component Contribution table groups tools by component family (e.g., `lean-ctx`, `jcodemunch`, `codegraph2`). Each row aggregates all tools within the same family, showing combined token usage and call counts. Skills and subagents are also included as separate families.
+
 ## Model Aliases (models.conf)
 
 Merge multiple model IDs under a single alias via `models.conf`:

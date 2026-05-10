@@ -286,7 +286,7 @@ def session(ctx: click.Context, session_id: str | None) -> None:
         for t in canonical.tool_rows[:10]
     ]
     mcp_stats = {"rows": canonical.mcp_rows, "total_tokens": sum(r["tokens"] for r in canonical.mcp_rows)}
-    component_stats = {"rows": canonical.component_rows, "total_tokens": sum(r["tokens"] for r in canonical.component_rows)}
+    component_stats = {"rows": canonical.component_family_rows, "total_tokens": sum(r["tokens"] for r in canonical.component_family_rows)}
     contributor_stats = {
         "rows": canonical.contributor_rows,
         "total_tokens": sum(r["tokens"] for r in canonical.contributor_rows),
@@ -820,23 +820,26 @@ def _build_component_stats(summary, attribution) -> dict[str, object]:
 
 
 def _build_component_stats_from_attribution(attribution) -> dict[str, object]:
-    rows: list[dict[str, object]] = []
+    family: dict[str, dict[str, object]] = {}
     total = 0
     for tool in attribution.tool_usage:
         group = _tool_group(tool.tool_name)
         tokens = int(tool.output_tokens)
+        calls = int(tool.call_count)
         total += tokens
-        rows.append(
-            {
+        if group not in family:
+            family[group] = {
                 "component_type": "tool",
                 "component_group": group,
-                "component_name": tool.tool_name,
-                "tokens": tokens,
-                "estimated_session_tokens": tokens,
-                "calls": int(tool.call_count),
+                "tokens": 0,
+                "estimated_session_tokens": 0,
+                "calls": 0,
             }
-        )
+        family[group]["tokens"] += tokens
+        family[group]["estimated_session_tokens"] += tokens
+        family[group]["calls"] += calls
 
+    rows = list(family.values())
     rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
     for row in rows:
         row["percent"] = round((int(row["tokens"]) / total * 100.0), 2) if total > 0 else 0.0
@@ -900,19 +903,25 @@ def _finalize_component_stats(component_map: dict[str, float]) -> dict[str, obje
 
 
 def _finalize_component_stats_canonical(component_map: dict[str, float]) -> dict[str, object]:
-    rows: list[dict[str, object]] = []
-    total = sum(component_map.values())
+    family: dict[str, float] = {}
     for key, tokens in component_map.items():
-        t = int(tokens)
         parts = key.split("|", 2)
         ctype = parts[0] if len(parts) > 0 else "component"
         cgroup = parts[1] if len(parts) > 1 else "unknown"
-        cname = parts[2] if len(parts) > 2 else key
+        family_key = f"{ctype}|{cgroup}"
+        family[family_key] = family.get(family_key, 0.0) + tokens
+
+    total = sum(family.values())
+    rows: list[dict[str, object]] = []
+    for family_key, tokens in family.items():
+        t = int(tokens)
+        parts = family_key.split("|", 1)
+        ctype = parts[0] if len(parts) > 0 else "component"
+        cgroup = parts[1] if len(parts) > 1 else "unknown"
         rows.append(
             {
                 "component_type": ctype,
                 "component_group": cgroup,
-                "component_name": cname,
                 "tokens": t,
                 "estimated_session_tokens": t,
                 "calls": 0,

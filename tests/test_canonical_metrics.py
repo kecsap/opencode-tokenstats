@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from opencode_tokenstats.canonical_metrics import build_canonical_metrics
+from opencode_tokenstats.canonical_metrics import build_canonical_metrics, _build_component_family_rows
 
 
 def test_build_canonical_metrics_basic_semantics() -> None:
@@ -222,3 +222,49 @@ def test_estimated_cost_uses_per_call_models(tmp_path) -> None:
             os.environ.pop("OPENCODE_MODEL_PRICING_FILE", None)
         else:
             os.environ["OPENCODE_MODEL_PRICING_FILE"] = old_pricing_env
+
+
+def test_component_family_rows_aggregate_by_group() -> None:
+    component_rows = [
+        {"component_type": "tool", "component_group": "lean-ctx", "tokens": 100, "estimated_session_tokens": 100, "calls": 5},
+        {"component_type": "tool", "component_group": "lean-ctx", "tokens": 200, "estimated_session_tokens": 200, "calls": 3},
+        {"component_type": "tool", "component_group": "jcodemunch", "tokens": 50, "estimated_session_tokens": 50, "calls": 2},
+        {"component_type": "skill", "component_group": "caveman", "tokens": 30, "estimated_session_tokens": 30, "calls": 0},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 3
+    assert family[0]["component_group"] == "lean-ctx"
+    assert family[0]["tokens"] == 300
+    assert family[0]["estimated_session_tokens"] == 300
+    assert family[0]["calls"] == 8
+    assert family[1]["component_group"] == "jcodemunch"
+    assert family[1]["tokens"] == 50
+    assert family[1]["calls"] == 2
+    assert family[2]["component_group"] == "caveman"
+    assert family[2]["component_type"] == "skill"
+
+
+def test_component_family_rows_in_canonical_metrics() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {"type": "tool", "tool": "lean-ctx_ctx_read", "state": {"status": "completed", "output": "a"}},
+                {"type": "tool", "tool": "lean-ctx_ctx_search", "state": {"status": "completed", "output": "b"}},
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-family", messages)
+
+    lean_ctx_family = [r for r in out.component_family_rows if r["component_group"] == "lean-ctx"]
+    assert len(lean_ctx_family) == 1
+    assert lean_ctx_family[0]["calls"] == 2
+    assert lean_ctx_family[0]["tokens"] > 0

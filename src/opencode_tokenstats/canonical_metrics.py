@@ -27,6 +27,7 @@ class CanonicalMetrics:
     estimated_cost_usd: float
     token_composition: dict[str, int]
     component_rows: list[dict[str, Any]]
+    component_family_rows: list[dict[str, Any]]
     contributor_rows: list[dict[str, Any]]
     tool_rows: list[dict[str, Any]]
     mcp_rows: list[dict[str, Any]]
@@ -109,6 +110,7 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
     contributor_rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
 
     mcp_rows = _build_mcp_rows(tool_rows)
+    component_family_rows = _build_component_family_rows(component_rows)
 
     token_composition = {
         "input": telemetry.input_tokens,
@@ -132,6 +134,7 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
         estimated_cost_usd=0.0 if (not _is_local_model(model) and telemetry.total_cost > 0) else estimated_session_cost,
         token_composition=token_composition,
         component_rows=component_rows,
+        component_family_rows=component_family_rows,
         contributor_rows=contributor_rows[:10],
         tool_rows=tool_rows,
         mcp_rows=mcp_rows,
@@ -219,6 +222,40 @@ def _component_group(name: str) -> str:
 
 
 _LOCAL_TOOL_RE = re.compile(r"^(read|bash|glob|todowrite|task|tokenscope|apply_patch|skill)$")
+
+
+def _build_component_family_rows(component_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in component_rows:
+        group = str(row["component_group"])
+        if group not in grouped:
+            grouped[group] = {
+                "component_type": row["component_type"],
+                "component_group": group,
+                "tokens": 0,
+                "estimated_session_tokens": 0,
+                "calls": 0,
+            }
+        g = grouped[group]
+        g["tokens"] += int(row["tokens"])
+        g["estimated_session_tokens"] += int(row["estimated_session_tokens"])
+        g["calls"] += int(row["calls"])
+
+    total_tokens = sum(v["tokens"] for v in grouped.values()) or 1
+    out: list[dict[str, Any]] = []
+    for g in grouped.values():
+        out.append(
+            {
+                "component_type": g["component_type"],
+                "component_group": g["component_group"],
+                "tokens": g["tokens"],
+                "estimated_session_tokens": g["estimated_session_tokens"],
+                "calls": g["calls"],
+                "percent": round((g["tokens"] / total_tokens * 100.0), 2),
+            }
+        )
+    out.sort(key=lambda x: x["tokens"], reverse=True)
+    return out
 
 
 def _build_mcp_rows(tool_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -251,7 +251,6 @@ def print_session_report(
         ct = Table(show_header=True, box=None)
         ct.add_column("Type")
         ct.add_column("Group")
-        ct.add_column("Name")
         ct.add_column("Tokens", justify="right")
         ct.add_column("Est.Session", justify="right")
         ct.add_column("Calls", justify="right")
@@ -260,7 +259,6 @@ def print_session_report(
             ct.add_row(
                 str(row.get("component_type")),
                 str(row.get("component_group")),
-                str(row.get("component_name")),
                 _fmt_int(row.get("tokens")),
                 _fmt_int(row.get("estimated_session_tokens")),
                 _fmt_int(row.get("calls", 0)),
@@ -386,7 +384,6 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         ct = Table(show_header=True, box=None)
         ct.add_column("Type")
         ct.add_column("Group")
-        ct.add_column("Name")
         ct.add_column("Tokens", justify="right")
         ct.add_column("Est.Session", justify="right")
         ct.add_column("Calls", justify="right")
@@ -395,7 +392,6 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
             ct.add_row(
                 str(row.get("component_type")),
                 str(row.get("component_group")),
-                str(row.get("component_name")),
                 _fmt_int(row.get("tokens")),
                 _fmt_int(row.get("estimated_session_tokens")),
                 _fmt_int(row.get("calls", 0)),

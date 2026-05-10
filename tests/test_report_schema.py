@@ -29,6 +29,16 @@ def _metric() -> CanonicalMetrics:
                 "calls": 2,
             }
         ],
+        component_family_rows=[
+            {
+                "component_type": "tool",
+                "component_group": "lean",
+                "tokens": 4,
+                "estimated_session_tokens": 4,
+                "calls": 2,
+                "percent": 100.0,
+            }
+        ],
         contributor_rows=[{"name": "lean-ctx_ctx_search", "tokens": 4, "percent": 100.0}],
         tool_rows=[{"tool": "lean-ctx_ctx_search", "tokens": 4, "percent": 100.0, "calls": 2}],
         mcp_rows=[{"name": "lean", "tokens": 4, "calls": 2, "tokens_per_call": 2.0, "percent": 100.0}],
@@ -98,6 +108,7 @@ def test_model_costs_uses_estimated_when_no_api() -> None:
         estimated_cost_usd=0.05,
         token_composition=metric.token_composition,
         component_rows=metric.component_rows,
+        component_family_rows=metric.component_family_rows,
         contributor_rows=metric.contributor_rows,
         tool_rows=metric.tool_rows,
         mcp_rows=metric.mcp_rows,
