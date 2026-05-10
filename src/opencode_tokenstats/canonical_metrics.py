@@ -57,11 +57,12 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
                 "percent": percent,
                 "calls": int(t.call_count),
                 "is_skill": t.is_skill,
+                "is_subagent": t.is_subagent,
             }
         )
         component_rows.append(
             {
-                "component_type": "skill" if t.is_skill else "tool",
+                "component_type": "skill" if t.is_skill else "subagent" if t.is_subagent else "tool",
                 "component_group": group,
                 "component_name": t.tool_name,
                 "tokens": int(t.output_tokens),
@@ -265,8 +266,8 @@ def _build_mcp_rows(tool_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         tool = str(row["tool"])
         if _LOCAL_TOOL_RE.match(tool):
             continue
-        # Exclude skill calls from MCP Insights - skills are not MCP tools
-        if row.get("is_skill"):
+        # Exclude skill and subagent calls from MCP Insights - they are not MCP tools
+        if row.get("is_skill") or row.get("is_subagent"):
             continue
         group = _component_group(tool)
         if group not in grouped:

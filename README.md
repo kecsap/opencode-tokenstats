@@ -135,9 +135,11 @@ The Component Contribution table groups all calls by component family (e.g., `le
 
 **Skill calls:** When a skill is loaded via the `skill` tool, the call is attributed to the specific skill name (e.g., `caveman`, `impeccable`) rather than a generic "skill" entry. Skills are grouped with tools sharing the same component group (e.g., a `svelte` skill call groups with `svelte_*` tools under the `svelte` family).
 
+**Subagent calls:** When a subagent is launched via the `task` tool, the call is attributed to the specific subagent type (e.g., `explore`, `general`) rather than a generic "task" entry. Subagents are grouped with tools sharing the same component group.
+
 ## MCP Insights
 
-The MCP Insights table shows only MCP server tool calls. Skill calls are excluded because skills are loaded from markdown files, not MCP servers. This table provides a narrower view focused on external tool dependencies.
+The MCP Insights table shows only MCP server tool calls. Skill calls and subagent calls are excluded because they are local operations, not MCP server calls. This table provides a narrower view focused on external tool dependencies.
 
 ## Model Aliases (models.conf)
 

@@ -397,3 +397,93 @@ def test_skill_calls_excluded_from_mcp_insights() -> None:
     mcp_names = {r["name"] for r in out.mcp_rows}
     assert "lean-ctx" in mcp_names
     assert "caveman" not in mcp_names
+
+
+def test_subagent_call_attribution() -> None:
+    """Test that task tool calls are attributed to the correct subagent component."""
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "task",
+                    "state": {
+                        "status": "completed",
+                        "input": {"subagent_type": "explore", "prompt": "find files"},
+                        "output": "subagent result",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "task",
+                    "state": {
+                        "status": "completed",
+                        "input": {"subagent_type": "general", "prompt": "research"},
+                        "output": "general result",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "lean-ctx_ctx_read",
+                    "state": {"status": "completed", "output": "file content"},
+                },
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-subagent", messages)
+
+    # Subagent calls should be attributed with component_type "subagent"
+    subagent_rows = [r for r in out.component_rows if r["component_type"] == "subagent"]
+    subagent_names = {r["component_name"] for r in subagent_rows}
+    assert "explore" in subagent_names
+    assert "general" in subagent_names
+
+    # Tool calls should be attributed with component_type "tool"
+    tool_rows = [r for r in out.component_rows if r["component_type"] == "tool"]
+    assert any(r["component_name"] == "lean-ctx_ctx_read" for r in tool_rows)
+
+
+def test_subagent_calls_excluded_from_mcp_insights() -> None:
+    """Test that subagent calls are not included in MCP Insights."""
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "task",
+                    "state": {
+                        "status": "completed",
+                        "input": {"subagent_type": "explore", "prompt": "find files"},
+                        "output": "subagent result",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "lean-ctx_ctx_read",
+                    "state": {"status": "completed", "output": "file content"},
+                },
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-mcp-subagent", messages)
+
+    # MCP rows should only contain lean-ctx, not explore subagent
+    mcp_names = {r["name"] for r in out.mcp_rows}
+    assert "lean-ctx" in mcp_names
+    assert "explore" not in mcp_names

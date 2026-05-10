@@ -35,6 +35,7 @@ class ToolUsageStat:
     output_tokens: int
     call_count: int
     is_skill: bool = False
+    is_subagent: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,7 @@ def collect_content_attribution(
     tool_calls: dict[str, int] = {}
     tool_output_tokens: dict[str, int] = {}
     skill_tools: set[str] = set()
+    subagent_tools: set[str] = set()
 
     for message in messages:
         system_tokens += _count_info_system(message, counter)
@@ -82,17 +84,19 @@ def collect_content_attribution(
             assistant_tokens += _count_text_parts(parts, counter)
 
         reasoning_tokens += _count_reasoning_parts(parts, counter)
-        _collect_tool_parts(parts, counter, tool_calls, tool_output_tokens, skill_tools)
+        _collect_tool_parts(parts, counter, tool_calls, tool_output_tokens, skill_tools, subagent_tools)
 
     tool_stats = []
     for tool_name, call_count in tool_calls.items():
         is_skill = tool_name in skill_tools
+        is_subagent = tool_name in subagent_tools
         tool_stats.append(
             ToolUsageStat(
                 tool_name=tool_name,
                 output_tokens=tool_output_tokens.get(tool_name, 0),
                 call_count=call_count,
                 is_skill=is_skill,
+                is_subagent=is_subagent,
             )
         )
     tool_stats.sort(key=lambda x: (x.output_tokens, x.call_count), reverse=True)
@@ -195,6 +199,7 @@ def _collect_tool_parts(
     tool_calls: dict[str, int],
     tool_output_tokens: dict[str, int],
     skill_tools: set[str],
+    subagent_tools: set[str],
 ) -> None:
     for part in parts:
         if part.get("type") != "tool":
@@ -208,6 +213,11 @@ def _collect_tool_parts(
         if tool_name == "skill":
             tool_name = _resolve_skill_name(part)
             skill_tools.add(tool_name)
+
+        # Resolve task tool calls to specific subagent types
+        if tool_name == "task":
+            tool_name = _resolve_subagent_name(part)
+            subagent_tools.add(tool_name)
 
         tool_calls[tool_name] = tool_calls.get(tool_name, 0) + 1
 
@@ -239,6 +249,20 @@ def _resolve_skill_name(part: dict[str, Any]) -> str:
             if isinstance(skill_name, str) and skill_name:
                 return skill_name
     return "skill"
+
+
+def _resolve_subagent_name(part: dict[str, Any]) -> str:
+    state = part.get("state")
+    if isinstance(state, dict):
+        input_data = state.get("input")
+        if isinstance(input_data, dict):
+            subagent_type = input_data.get("subagent_type")
+            if isinstance(subagent_type, str) and subagent_type:
+                return subagent_type
+            subagent_type = input_data.get("type")
+            if isinstance(subagent_type, str) and subagent_type:
+                return subagent_type
+    return "task"
 
 
 def _tool_output_to_text(output: Any) -> str:
