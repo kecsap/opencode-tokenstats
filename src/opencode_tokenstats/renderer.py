@@ -313,6 +313,10 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
             print(f"MCP Stats: {report['mcp_stats']}")
         if report.get("component_stats"):
             print(f"Components: {report['component_stats']}")
+        if report.get("by_activity"):
+            print(f"By Activity: {report['by_activity']}")
+        if report.get("top_sessions"):
+            print(f"Top Sessions: {report['top_sessions']}")
         return
 
     console = Console()
@@ -464,3 +468,45 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
 
     if panels:
         console.print(Columns(panels, equal=False, padding=0))
+
+    # Build By Activity panel
+    by_activity = report.get("by_activity")
+    if isinstance(by_activity, list) and by_activity:
+        act = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        act.add_column("", style="bold")
+        act.add_column("", justify="left")
+        act.add_column("Tokens", justify="right")
+        act.add_column("Turns", justify="right")
+        act.add_column("Cost", justify="right")
+        max_tokens = max((int(row.get("tokens", 0)) for row in by_activity), default=1) or 1
+        for row in by_activity:
+            tokens = int(row.get("tokens", 0))
+            bar_text = _color_bar(tokens, max_tokens, COL_GREEN, width=10)
+            act.add_row(
+                str(row.get("label", row.get("category", "?"))),
+                bar_text,
+                _fmt_int(tokens),
+                _fmt_int(row.get("turns", 0)),
+                _fmt_float(row.get("cost", 0)),
+            )
+        console.print(Panel(act, title="By Activity", border_style=COL_GREEN))
+
+    # Build Top Sessions panel
+    top_sessions = report.get("top_sessions")
+    if isinstance(top_sessions, list) and top_sessions:
+        ts = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        ts.add_column("", style="bold")
+        ts.add_column("", justify="left")
+        ts.add_column("Tokens", justify="right")
+        ts.add_column("Cost", justify="right")
+        max_tokens = max((int(row.get("tokens", 0)) for row in top_sessions), default=1) or 1
+        for row in top_sessions:
+            tokens = int(row.get("tokens", 0))
+            bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=10)
+            ts.add_row(
+                str(row.get("root_dir", "-")),
+                bar_text,
+                _fmt_int(tokens),
+                _fmt_float(row.get("cost", 0)),
+            )
+        console.print(Panel(ts, title="Top Sessions", border_style=COL_ORANGE))
