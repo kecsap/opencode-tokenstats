@@ -264,7 +264,6 @@ _CORE_OPENCODE_TOOLS = {
     "question",
     "compress",
     "write",
-    "quota",
 }
 _CORE_OPENCODE_SKILLS = {"plan", "implement"}
 _CORE_OPENCODE_SUBAGENTS = {"explore", "general"}

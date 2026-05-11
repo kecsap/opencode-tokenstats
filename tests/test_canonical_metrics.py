@@ -737,43 +737,6 @@ def test_write_tool_excluded_from_mcp_insights() -> None:
     assert "write" in core_names
 
 
-def test_quota_tool_excluded_from_mcp_insights() -> None:
-    """Test that the 'quota' core tool is not included in MCP Insights."""
-    messages = [
-        {
-            "role": "assistant",
-            "info": {
-                "modelID": "gpt-5.3-codex",
-                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
-                "cost": 0.1,
-                "system": "sys",
-            },
-            "parts": [
-                {"type": "text", "text": "ok"},
-                {
-                    "type": "tool",
-                    "tool": "quota",
-                    "state": {
-                        "status": "completed",
-                        "output": "quota status",
-                    },
-                },
-                {
-                    "type": "tool",
-                    "tool": "lean-ctx_ctx_read",
-                    "state": {"status": "completed", "output": "file content"},
-                },
-            ],
-        }
-    ]
-    out = build_canonical_metrics("s-quota", messages)
-    mcp_names = {r["name"] for r in out.mcp_rows}
-    assert "quota" not in mcp_names
-    assert "lean-ctx" in mcp_names
-    core_names = {r["component_name"] for r in out.core_rows}
-    assert "quota" in core_names
-
-
 def test_additional_core_components_classification() -> None:
     messages = [
         {
