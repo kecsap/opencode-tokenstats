@@ -23,6 +23,7 @@ except Exception:
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from opencode_tokenstats.client import ApiClientError, OpencodeApiClient
+    from opencode_tokenstats.activity_classifier import classify_session, CATEGORY_LABELS
     from opencode_tokenstats.canonical_metrics import build_canonical_metrics
     from opencode_tokenstats.compatibility import analyze_context_compatibility
     from opencode_tokenstats.local_session_service import LocalSessionService, LocalStorageError
@@ -32,6 +33,7 @@ if __package__ in {None, ""}:
     from opencode_tokenstats.tokenization import TokenizerRegistry
     from opencode_tokenstats.pricing import load_model_aliases
 else:
+    from .activity_classifier import classify_session, CATEGORY_LABELS
     from .client import ApiClientError, OpencodeApiClient
     from .canonical_metrics import build_canonical_metrics
     from .compatibility import analyze_context_compatibility
@@ -531,6 +533,14 @@ def _build_period_report(
     aliases = load_model_aliases(options.get("model_alias_file"))
     model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0})
 
+    # Build session title lookup for root_dir extraction
+    session_titles: dict[str, str] = {
+        str(sess.get("id", "")): str(sess.get("title", "")) for sess in sessions
+    }
+    # Activity aggregation maps
+    activity_map: dict[str, dict[str, object]] = {}
+    session_rows: list[dict[str, object]] = []
+
     for canonical in session_metrics:
         used += 1
         total_calls += canonical.api_calls
@@ -553,6 +563,27 @@ def _build_period_report(
         model_map[model_key]["api_cost"] += float(canonical.actual_cost_usd)
         model_map[model_key]["estimated_cost"] += float(canonical.estimated_cost_usd)
 
+        # Classify session and aggregate by activity
+        category = classify_session(canonical)
+        if category not in activity_map:
+            activity_map[category] = {"tokens": 0, "turns": 0, "cost": 0.0}
+        activity_map[category]["tokens"] += canonical.session_total_tokens
+        activity_map[category]["turns"] += canonical.api_calls
+        activity_map[category]["cost"] += canonical.estimated_cost_usd
+
+        # Build per-session row for top_sessions
+        raw_title = session_titles.get(canonical.session_id, "")
+        root_dir = Path(raw_title).name if raw_title else "-"
+        if not root_dir:
+            root_dir = "-"
+        session_rows.append(
+            {
+                "root_dir": root_dir,
+                "tokens": canonical.session_total_tokens,
+                "cost": round(canonical.estimated_cost_usd, 6),
+            }
+        )
+
     top_tools = sorted(
         [
             {
@@ -565,6 +596,23 @@ def _build_period_report(
         key=lambda x: (x["output_tokens"], x["call_count"]),
         reverse=True,
     )[:10]
+
+    # Format by_activity rows sorted by cost desc
+    by_activity = [
+        {
+            "category": cat,
+            "label": CATEGORY_LABELS.get(cat, cat.title()),
+            "tokens": data["tokens"],
+            "turns": data["turns"],
+            "cost": round(data["cost"], 6),
+        }
+        for cat, data in activity_map.items()
+    ]
+    by_activity.sort(key=lambda x: x["cost"], reverse=True)
+
+    # Format top_sessions sorted by cost desc, limit 5
+    session_rows.sort(key=lambda x: x["cost"], reverse=True)
+    top_sessions = session_rows[:5]
 
     return {
         "sessions": used,
@@ -579,6 +627,8 @@ def _build_period_report(
         "core_stats": _finalize_core_stats(core_map),
         "component_stats": _finalize_component_stats_canonical(component_map, core_tokens=sum(core_map.values())),
         "model_costs": _finalize_model_costs(model_map),
+        "by_activity": by_activity,
+        "top_sessions": top_sessions,
     }
 
 
