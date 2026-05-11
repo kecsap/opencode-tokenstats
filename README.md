@@ -133,6 +133,8 @@ The Model Costs table shows both API costs (from telemetry) and estimated costs 
 
 The Component Contribution table groups all calls by component family (e.g., `lean-ctx`, `jcodemunch`, `codegraph2`). Each row aggregates all calls within the same family, showing combined token usage and call counts. It also includes an aggregate row for OpenCode core usage: `type=core`, `group=opencode-core`.
 
+**Mixed types:** When a component group contains entries of different types (e.g., both `tool` and `skill` under `svelte`), they are merged into a single row with type `mixed`. Groups with a single type retain that type.
+
 **Skill calls:** When a skill is loaded via the `skill` tool, the call is attributed to the specific skill name (e.g., `caveman`, `impeccable`) rather than a generic "skill" entry. Hyphenated skill names are preserved as-is unless multiple skills share the same prefix (e.g., `implement-slice` and `implement-plan` merge under `implement`), and non-hyphenated skill names still group naturally with matching tool families (e.g., `svelte` with `svelte_*` tools).
 
 **Subagent calls:** When a subagent is launched via the `task` tool, the call is attributed to the specific subagent type (e.g., `explore`, `general`) rather than a generic "task" entry. Subagents are grouped with tools sharing the same component group.

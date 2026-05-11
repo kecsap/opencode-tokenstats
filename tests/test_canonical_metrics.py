@@ -362,6 +362,34 @@ def test_skill_call_grouping_in_family() -> None:
     assert svelte_family[0]["calls"] == 2
 
 
+def test_component_family_mixed_type_when_group_has_multiple_types() -> None:
+    """Test that a group with multiple types shows 'mixed' instead of a single type."""
+    component_rows = [
+        {"component_type": "tool", "component_group": "svelte", "tokens": 100, "estimated_session_tokens": 100, "calls": 2},
+        {"component_type": "skill", "component_group": "svelte", "tokens": 50, "estimated_session_tokens": 50, "calls": 1},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 1
+    assert family[0]["component_group"] == "svelte"
+    assert family[0]["component_type"] == "mixed"
+    assert family[0]["tokens"] == 150
+
+
+def test_component_family_single_type_preserved() -> None:
+    """Test that a group with a single type keeps that type."""
+    component_rows = [
+        {"component_type": "tool", "component_group": "lean-ctx", "tokens": 100, "estimated_session_tokens": 100, "calls": 3},
+        {"component_type": "tool", "component_group": "lean-ctx", "tokens": 50, "estimated_session_tokens": 50, "calls": 2},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 1
+    assert family[0]["component_group"] == "lean-ctx"
+    assert family[0]["component_type"] == "tool"
+    assert family[0]["tokens"] == 150
+
+
 def test_skill_family_preserves_single_hyphenated_skill_name() -> None:
     messages = [
         {

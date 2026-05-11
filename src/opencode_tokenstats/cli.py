@@ -929,27 +929,28 @@ def _finalize_core_stats(core_map: dict[str, float]) -> dict[str, object]:
 
 
 def _finalize_component_stats_canonical(component_map: dict[str, float], *, core_tokens: float = 0.0) -> dict[str, object]:
-    family: dict[str, float] = {}
+    family: dict[str, dict[str, Any]] = {}
+    type_sets: dict[str, set[str]] = {}
     for key, tokens in component_map.items():
         parts = key.split("|", 2)
         ctype = parts[0] if len(parts) > 0 else "component"
         cgroup = parts[1] if len(parts) > 1 else "unknown"
-        family_key = f"{ctype}|{cgroup}"
-        family[family_key] = family.get(family_key, 0.0) + tokens
+        if cgroup not in family:
+            family[cgroup] = {"tokens": 0.0}
+        type_sets.setdefault(cgroup, set()).add(ctype)
+        family[cgroup]["tokens"] += tokens
 
-    total = sum(family.values()) + float(core_tokens)
+    total = sum(v["tokens"] for v in family.values()) + float(core_tokens)
     rows: list[dict[str, object]] = []
-    for family_key, tokens in family.items():
-        t = int(tokens)
-        parts = family_key.split("|", 1)
-        ctype = parts[0] if len(parts) > 0 else "component"
-        cgroup = parts[1] if len(parts) > 1 else "unknown"
+    for cgroup, data in family.items():
+        t = int(data["tokens"])
+        types = type_sets.get(cgroup, set())
         rows.append(
             {
-                "component_type": ctype,
+                "component_type": "mixed" if len(types) > 1 else (types.pop() if types else "unknown"),
                 "component_group": cgroup,
                 "tokens": t,
-                "percent": round((tokens / total * 100.0), 2) if total > 0 else 0.0,
+                "percent": round((data["tokens"] / total * 100.0), 2) if total > 0 else 0.0,
             }
         )
     rows.sort(key=lambda x: int(x["tokens"]), reverse=True)

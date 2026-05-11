@@ -268,16 +268,17 @@ _CORE_OPENCODE_SUBAGENTS = {"explore", "general"}
 def _build_component_family_rows(component_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     _normalize_skill_component_groups(component_rows)
     grouped: dict[str, dict[str, Any]] = {}
+    type_sets: dict[str, set[str]] = {}
     for row in component_rows:
         group = str(row["component_group"])
         if group not in grouped:
             grouped[group] = {
-                "component_type": row["component_type"],
                 "component_group": group,
                 "tokens": 0,
                 "estimated_session_tokens": 0,
                 "calls": 0,
             }
+        type_sets.setdefault(group, set()).add(row["component_type"])
         g = grouped[group]
         g["tokens"] += int(row["tokens"])
         g["estimated_session_tokens"] += int(row["estimated_session_tokens"])
@@ -286,10 +287,12 @@ def _build_component_family_rows(component_rows: list[dict[str, Any]]) -> list[d
     total_tokens = sum(v["tokens"] for v in grouped.values()) or 1
     out: list[dict[str, Any]] = []
     for g in grouped.values():
+        group = g["component_group"]
+        types = type_sets.get(group, set())
         out.append(
             {
-                "component_type": g["component_type"],
-                "component_group": g["component_group"],
+                "component_type": "mixed" if len(types) > 1 else (types.pop() if types else "unknown"),
+                "component_group": group,
                 "tokens": g["tokens"],
                 "estimated_session_tokens": g["estimated_session_tokens"],
                 "calls": g["calls"],
@@ -327,11 +330,12 @@ def _build_core_rows(component_rows: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def _normalize_skill_component_groups(component_rows: list[dict[str, Any]]) -> None:
+    # Collect all prefixes from skills (hyphenated names)
     skill_prefix_counts: dict[str, int] = {}
     for row in component_rows:
         if row.get("component_type") != "skill":
             continue
-        name = str(row.get("component_name", ""))
+        name = str(row.get("component_name", row.get("component_group", "")))
         if "-" not in name:
             continue
         prefix = name.split("-", 1)[0]
@@ -339,18 +343,23 @@ def _normalize_skill_component_groups(component_rows: list[dict[str, Any]]) -> N
             continue
         skill_prefix_counts[prefix] = skill_prefix_counts.get(prefix, 0) + 1
 
-    if not skill_prefix_counts:
-        return
+    # Collect tool groups to check for overlapping prefixes
+    tool_groups: set[str] = set()
+    for row in component_rows:
+        if row.get("component_type") == "tool":
+            tool_groups.add(row.get("component_group", ""))
 
     for row in component_rows:
         if row.get("component_type") != "skill":
             continue
-        name = str(row.get("component_name", ""))
+        name = str(row.get("component_name", row.get("component_group", "")))
         if "-" not in name:
-            row["component_group"] = name
             continue
         prefix = name.split("-", 1)[0]
-        if prefix and skill_prefix_counts.get(prefix, 0) > 1:
+        # Normalize to prefix if:
+        # - multiple skills share the prefix, OR
+        # - a tool already exists with the same prefix as group
+        if prefix and (skill_prefix_counts.get(prefix, 0) > 1 or prefix in tool_groups):
             row["component_group"] = prefix
         else:
             row["component_group"] = name
