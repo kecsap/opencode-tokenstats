@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from .activity_classifier import classify_session, CATEGORY_LABELS
 from .canonical_metrics import CanonicalMetrics
 from .pricing import load_model_aliases
 
@@ -116,6 +117,39 @@ def build_report_schema(
         }
     ]
 
+    # Build by_activity rows (session-level classification)
+    activity_map: dict[str, dict[str, object]] = {}
+    session_rows: list[dict[str, object]] = []
+    for m in session_metrics:
+        category = classify_session(m)
+        if category not in activity_map:
+            activity_map[category] = {"tokens": 0, "turns": 0, "cost": 0.0}
+        activity_map[category]["tokens"] += m.session_total_tokens
+        activity_map[category]["turns"] += m.api_calls
+        activity_map[category]["cost"] += m.estimated_cost_usd
+        session_rows.append(
+            {
+                "root_dir": m.session_id or "-",
+                "tokens": m.session_total_tokens,
+                "cost": round(m.estimated_cost_usd, 6),
+            }
+        )
+
+    by_activity = [
+        {
+            "category": cat,
+            "label": CATEGORY_LABELS.get(cat, cat.title()),
+            "tokens": data["tokens"],
+            "turns": data["turns"],
+            "cost": round(data["cost"], 6),
+        }
+        for cat, data in activity_map.items()
+    ]
+    by_activity.sort(key=lambda x: x["cost"], reverse=True)
+
+    session_rows.sort(key=lambda x: x["cost"], reverse=True)
+    top_sessions = session_rows[:5]
+
     return {
         "overview": {
             "period": period,
@@ -139,6 +173,8 @@ def build_report_schema(
         "period_series": period_series,
         "projects": [],
         "models": model_rows,
+        "by_activity": by_activity,
+        "top_sessions": top_sessions,
     }
 
 
