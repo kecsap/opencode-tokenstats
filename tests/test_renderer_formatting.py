@@ -35,3 +35,20 @@ def test_session_report_formats_fractions(monkeypatch, capsys) -> None:
     )
 
     out = capsys.readouterr().out
+
+
+def test_composition_table_tokens_column_no_custom_style() -> None:
+    """Token Composition Tokens/% columns must not carry custom style (e.g. dim).
+
+    They should use the default style so terminal colors are respected,
+    matching every other numeric column in the dashboard."""
+    table = renderer._build_composition_table(
+        {"input": 100, "output": 200, "reasoning": 50},
+        350,
+    )
+    columns = table.columns
+    tokens_col = columns[2]
+    pct_col = columns[3]
+
+    assert not tokens_col.style, "Tokens column must not have a custom style"
+    assert not pct_col.style, "% column must not have a custom style"

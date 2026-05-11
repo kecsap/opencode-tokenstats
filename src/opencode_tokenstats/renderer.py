@@ -107,8 +107,8 @@ def _build_composition_table(token_composition: dict[str, int], total_tokens: in
     comp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
     comp.add_column("", style="bold")
     comp.add_column("", justify="left")
-    comp.add_column("Tokens", justify="right", style="dim")
-    comp.add_column("%", justify="right", style="dim")
+    comp.add_column("Tokens", justify="right")
+    comp.add_column("%", justify="right")
 
     # Color mapping for components
     color_map = {
