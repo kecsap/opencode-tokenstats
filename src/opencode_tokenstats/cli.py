@@ -23,7 +23,7 @@ except Exception:
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from opencode_tokenstats.client import ApiClientError, OpencodeApiClient
-    from opencode_tokenstats.activity_classifier import classify_session, CATEGORY_LABELS
+    from opencode_tokenstats.activity_classifier import classify_session, CATEGORY_LABELS, extract_root_dir
     from opencode_tokenstats.canonical_metrics import build_canonical_metrics
     from opencode_tokenstats.compatibility import analyze_context_compatibility
     from opencode_tokenstats.local_session_service import LocalSessionService, LocalStorageError
@@ -33,7 +33,7 @@ if __package__ in {None, ""}:
     from opencode_tokenstats.tokenization import TokenizerRegistry
     from opencode_tokenstats.pricing import load_model_aliases
 else:
-    from .activity_classifier import classify_session, CATEGORY_LABELS
+    from .activity_classifier import classify_session, CATEGORY_LABELS, extract_root_dir
     from .client import ApiClientError, OpencodeApiClient
     from .canonical_metrics import build_canonical_metrics
     from .compatibility import analyze_context_compatibility
@@ -573,9 +573,7 @@ def _build_period_report(
 
         # Build per-session row for top_sessions
         raw_title = session_titles.get(canonical.session_id, "")
-        root_dir = Path(raw_title).name if raw_title else "-"
-        if not root_dir:
-            root_dir = "-"
+        root_dir = extract_root_dir(raw_title)
         session_rows.append(
             {
                 "root_dir": root_dir,

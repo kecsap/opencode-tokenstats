@@ -1,6 +1,23 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from .canonical_metrics import CanonicalMetrics
+
+
+def extract_root_dir(raw_title: str) -> str:
+    """Extract display root dir (last path segment) from session title.
+
+    Deterministic, no filesystem probing.
+    - Path-like: `/home/fafa/eju` -> `eju`
+    - Plain title: `my-project` -> `my-project`
+    - Empty/invalid: -> `-`
+    """
+    if not raw_title:
+        return "-"
+    name = Path(raw_title).name
+    return name if name else "-"
+
 
 # Tool sets for classification (mirrors codeburn classifier logic)
 _EDIT_TOOLS = frozenset({"edit", "write", "apply_patch", "apply"})
