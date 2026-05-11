@@ -61,7 +61,6 @@ def test_json_command(monkeypatch) -> None:
     assert payload["overview"]["period"] == "month"
     assert "tokens" in payload
     assert "tools" in payload
-    assert "contributors" in payload
 
 
 def test_json_command_markdown(monkeypatch) -> None:

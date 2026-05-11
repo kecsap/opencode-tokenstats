@@ -22,16 +22,6 @@
       "calls": 1
     }
   ],
-  "contributors": [
-    {
-      "name": "System (inferred from API telemetry)",
-      "tokens": 4
-    },
-    {
-      "name": "lean-ctx_ctx_search",
-      "tokens": 2
-    }
-  ],
   "skills": [],
   "subagents": [],
   "context_estimates": {

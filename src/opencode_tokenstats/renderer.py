@@ -164,7 +164,6 @@ def print_session_report(
     mcp_stats: dict[str, Any] | None = None,
     component_stats: dict[str, Any] | None = None,
     core_stats: dict[str, Any] | None = None,
-    contributor_stats: dict[str, Any] | None = None,
     model_costs: list[dict[str, Any]] | None = None,
 ) -> None:
     if not RICH_AVAILABLE:
@@ -184,8 +183,6 @@ def print_session_report(
             print(f"OpenCode Core: {core_stats}")
         if component_stats:
             print(f"Components: {component_stats}")
-        if contributor_stats:
-            print(f"Contributors: {contributor_stats}")
         return
 
     console = Console()
@@ -290,15 +287,6 @@ def print_session_report(
             )
         console.print(Panel(ct, title="Component Contribution", border_style=COL_MAGENTA))
 
-    if contributor_stats and contributor_stats.get("rows"):
-        cc = Table(show_header=True, box=None)
-        cc.add_column("Contributor")
-        cc.add_column("Tokens", justify="right")
-        cc.add_column("%", justify="right")
-        for row in contributor_stats["rows"]:
-            cc.add_row(str(row.get("name")), _fmt_int(row.get("tokens")), _fmt_float(row.get("percent")))
-        console.print(Panel(cc, title="Top Contributors", border_style=COL_BLUE))
-
 
 def print_period_report(label: str, report: dict[str, Any]) -> None:
     if not RICH_AVAILABLE:
@@ -318,8 +306,6 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
             print(f"MCP Stats: {report['mcp_stats']}")
         if report.get("component_stats"):
             print(f"Components: {report['component_stats']}")
-        if report.get("contributor_stats"):
-            print(f"Contributors: {report['contributor_stats']}")
         return
 
     console = Console()
@@ -457,13 +443,3 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     # Print all three panels in one row
     if panels:
         console.print(Columns(panels, equal=False, padding=0))
-
-    contributor_stats = report.get("contributor_stats")
-    if isinstance(contributor_stats, dict) and contributor_stats.get("rows"):
-        cc = Table(show_header=True, box=None)
-        cc.add_column("Contributor")
-        cc.add_column("Tokens", justify="right")
-        cc.add_column("%", justify="right")
-        for row in contributor_stats["rows"]:
-            cc.add_row(str(row.get("name")), _fmt_int(row.get("tokens")), _fmt_float(row.get("percent")))
-        console.print(Panel(cc, title="Top Contributors", border_style=COL_BLUE))

@@ -45,7 +45,6 @@ def build_report_schema(
     }
 
     tools: dict[str, dict[str, int]] = {}
-    contributors: dict[str, int] = {}
     models: dict[str, dict[str, float]] = {}
     components: dict[tuple[str, str, str], int] = {}
     skills: dict[str, int] = {}
@@ -64,9 +63,6 @@ def build_report_schema(
                 tools[name] = {"tokens": 0, "calls": 0}
             tools[name]["tokens"] += int(row["tokens"])
             tools[name]["calls"] += int(row["calls"])
-        for row in m.contributor_rows:
-            name = str(row["name"])
-            contributors[name] = contributors.get(name, 0) + int(row["tokens"])
         for row in m.component_rows:
             ctype = str(row["component_type"])
             cgroup = str(row["component_group"])
@@ -83,9 +79,6 @@ def build_report_schema(
         for k, v in tools.items()
     ]
     tool_rows.sort(key=lambda x: (x["tokens"], x["calls"]), reverse=True)
-
-    contributor_rows = [{"name": k, "tokens": v} for k, v in contributors.items()]
-    contributor_rows.sort(key=lambda x: x["tokens"], reverse=True)
 
     model_rows = []
     for k, costs in models.items():
@@ -136,7 +129,6 @@ def build_report_schema(
         },
         "tokens": token_totals,
         "tools": tool_rows,
-        "contributors": contributor_rows,
         "skills": [{"name": k, "tokens": v} for k, v in sorted(skills.items(), key=lambda x: x[1], reverse=True)],
         "subagents": [{"name": k, "tokens": v} for k, v in sorted(subagents.items(), key=lambda x: x[1], reverse=True)],
         "context_estimates": {

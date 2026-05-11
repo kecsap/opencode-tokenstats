@@ -40,7 +40,6 @@ def _metric() -> CanonicalMetrics:
             }
         ],
         core_rows=[],
-        contributor_rows=[{"name": "lean-ctx_ctx_search", "tokens": 4, "percent": 100.0}],
         tool_rows=[{"tool": "lean-ctx_ctx_search", "tokens": 4, "percent": 100.0, "calls": 2}],
         mcp_rows=[{"name": "lean", "tokens": 4, "calls": 2, "tokens_per_call": 2.0, "percent": 100.0}],
     )
@@ -54,7 +53,6 @@ def test_build_report_schema_blocks() -> None:
         "overview",
         "tokens",
         "tools",
-        "contributors",
         "skills",
         "subagents",
         "context_estimates",
@@ -111,7 +109,6 @@ def test_model_costs_uses_estimated_when_no_api() -> None:
         component_rows=metric.component_rows,
         component_family_rows=metric.component_family_rows,
         core_rows=metric.core_rows,
-        contributor_rows=metric.contributor_rows,
         tool_rows=metric.tool_rows,
         mcp_rows=metric.mcp_rows,
     )

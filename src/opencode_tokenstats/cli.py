@@ -288,10 +288,6 @@ def session(ctx: click.Context, session_id: str | None) -> None:
     mcp_stats = {"rows": canonical.mcp_rows, "total_tokens": sum(r["tokens"] for r in canonical.mcp_rows)}
     core_stats = {"rows": canonical.core_rows, "total_tokens": sum(r["tokens"] for r in canonical.core_rows)}
     component_stats = {"rows": canonical.component_family_rows, "total_tokens": sum(r["tokens"] for r in canonical.component_family_rows)}
-    contributor_stats = {
-        "rows": canonical.contributor_rows,
-        "total_tokens": sum(r["tokens"] for r in canonical.contributor_rows),
-    }
     model_costs = [
         {
             "model": canonical.model,
@@ -310,7 +306,6 @@ def session(ctx: click.Context, session_id: str | None) -> None:
         mcp_stats=mcp_stats,
         core_stats=core_stats,
         component_stats=component_stats,
-        contributor_stats=contributor_stats,
         model_costs=model_costs,
     )
 
@@ -533,7 +528,6 @@ def _build_period_report(
     mcp_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
     component_map: dict[str, float] = defaultdict(float)
     core_map: dict[str, float] = defaultdict(float)
-    contributor_map: dict[str, float] = defaultdict(float)
     aliases = load_model_aliases(options.get("model_alias_file"))
     model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0})
 
@@ -555,8 +549,6 @@ def _build_period_report(
                 core_map[r["component_name"]] += float(r["tokens"])
             else:
                 component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"] += float(r["tokens"])
-        for row in canonical.contributor_rows:
-            contributor_map[row["name"]] += float(row["tokens"])
         model_key = aliases.get(canonical.model, canonical.model)
         model_map[model_key]["api_cost"] += float(canonical.actual_cost_usd)
         model_map[model_key]["estimated_cost"] += float(canonical.estimated_cost_usd)
@@ -586,7 +578,6 @@ def _build_period_report(
         "mcp_stats": _finalize_mcp_stats(mcp_map),
         "core_stats": _finalize_core_stats(core_map),
         "component_stats": _finalize_component_stats_canonical(component_map, core_tokens=sum(core_map.values())),
-        "contributor_stats": _finalize_contributor_stats(contributor_map),
         "model_costs": _finalize_model_costs(model_map),
     }
 
@@ -862,35 +853,6 @@ def _accumulate_components(component_map: dict[str, float], summary, attribution
     component_map["user"] += float(attribution.totals.user_tokens)
     component_map["assistant"] += float(attribution.totals.assistant_tokens)
     component_map["tool_output"] += float(attribution.totals.tool_output_tokens)
-
-
-def _build_contributor_stats(attribution) -> dict[str, object]:
-    cmap: dict[str, float] = defaultdict(float)
-    _accumulate_contributors(cmap, attribution)
-    return _finalize_contributor_stats(cmap)
-
-
-def _accumulate_contributors(contributor_map: dict[str, float], attribution) -> None:
-    for tool in attribution.tool_usage:
-        contributor_map[tool.tool_name] += float(tool.output_tokens)
-    if attribution.totals.system_tokens > 0:
-        contributor_map["System"] += float(attribution.totals.system_tokens)
-
-
-def _finalize_contributor_stats(contributor_map: dict[str, float]) -> dict[str, object]:
-    total = sum(contributor_map.values())
-    rows = []
-    for name, tokens in contributor_map.items():
-        t = int(tokens)
-        rows.append(
-            {
-                "name": name,
-                "tokens": t,
-                "percent": round((tokens / total * 100.0), 2) if total > 0 else 0.0,
-            }
-        )
-    rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
-    return {"rows": rows[:10], "total_tokens": int(total)}
 
 
 def _finalize_component_stats(component_map: dict[str, float]) -> dict[str, object]:

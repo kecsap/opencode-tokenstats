@@ -29,7 +29,6 @@ class CanonicalMetrics:
     component_rows: list[dict[str, Any]]
     component_family_rows: list[dict[str, Any]]
     core_rows: list[dict[str, Any]]
-    contributor_rows: list[dict[str, Any]]
     tool_rows: list[dict[str, Any]]
     mcp_rows: list[dict[str, Any]]
 
@@ -103,21 +102,6 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
             }
         )
 
-    contributor_rows = [{"name": row["component_name"], "tokens": row["tokens"]} for row in component_rows]
-    if attribution.totals.system_tokens > 0:
-        base = max(sum(r["tokens"] for r in component_rows) + attribution.totals.system_tokens, 1)
-        contributor_rows.append(
-            {
-                "name": "System (inferred from API telemetry)",
-                "tokens": int(attribution.totals.system_tokens),
-                "percent": round((attribution.totals.system_tokens / base) * 100.0, 2),
-            }
-        )
-    contrib_total = max(sum(int(r["tokens"]) for r in contributor_rows), 1)
-    for row in contributor_rows:
-        row["percent"] = round((int(row["tokens"]) / contrib_total) * 100.0, 2)
-    contributor_rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
-
     mcp_rows = _build_mcp_rows(tool_rows)
     component_family_rows = _build_component_family_rows(component_rows)
 
@@ -147,7 +131,6 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
         component_rows=component_rows,
         component_family_rows=component_family_rows,
         core_rows=core_rows,
-        contributor_rows=contributor_rows[:10],
         tool_rows=tool_rows,
         mcp_rows=mcp_rows,
     )
