@@ -51,7 +51,7 @@ class LocalSessionService:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT id, title, parent_id, time_created
+                SELECT id, title, parent_id, time_created, directory
                 FROM session
                 ORDER BY time_created DESC
                 """
@@ -62,6 +62,7 @@ class LocalSessionService:
                     "title": row["title"],
                     "parent_id": row["parent_id"],
                     "time_created": row["time_created"],
+                    "directory": row["directory"],
                 }
                 for row in rows
             ]

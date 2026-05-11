@@ -123,15 +123,17 @@ def build_report_schema(
     for m in session_metrics:
         category = classify_session(m)
         if category not in activity_map:
-            activity_map[category] = {"tokens": 0, "turns": 0, "cost": 0.0}
+            activity_map[category] = {"tokens": 0, "calls": 0, "api_cost": 0.0, "estimated_cost": 0.0}
         activity_map[category]["tokens"] += m.session_total_tokens
-        activity_map[category]["turns"] += m.api_calls
-        activity_map[category]["cost"] += m.estimated_cost_usd
+        activity_map[category]["calls"] += m.api_calls
+        activity_map[category]["api_cost"] += m.actual_cost_usd
+        activity_map[category]["estimated_cost"] += m.estimated_cost_usd
         session_rows.append(
             {
                 "root_dir": m.session_id or "-",
                 "tokens": m.session_total_tokens,
-                "cost": round(m.estimated_cost_usd, 6),
+                "api_cost": round(m.actual_cost_usd, 6),
+                "estimated_cost": round(m.estimated_cost_usd, 6),
             }
         )
 
@@ -140,15 +142,16 @@ def build_report_schema(
             "category": cat,
             "label": CATEGORY_LABELS.get(cat, cat.title()),
             "tokens": data["tokens"],
-            "turns": data["turns"],
-            "cost": round(data["cost"], 6),
+            "calls": data["calls"],
+            "api_cost": round(data["api_cost"], 6),
+            "estimated_cost": round(data["estimated_cost"], 6),
         }
         for cat, data in activity_map.items()
     ]
-    by_activity.sort(key=lambda x: x["cost"], reverse=True)
+    by_activity.sort(key=lambda x: x["api_cost"] if x["api_cost"] > 0 else x["estimated_cost"], reverse=True)
 
-    session_rows.sort(key=lambda x: x["cost"], reverse=True)
-    top_sessions = session_rows[:5]
+    session_rows.sort(key=lambda x: x["api_cost"] if x["api_cost"] > 0 else x["estimated_cost"], reverse=True)
+    top_sessions = session_rows[:10]
 
     return {
         "overview": {

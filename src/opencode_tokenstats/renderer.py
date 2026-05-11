@@ -201,7 +201,7 @@ def print_session_report(
         tt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
         tt.add_column("", style="bold")
         tt.add_column("", justify="left")
-        tt.add_column("Output Tokens", justify="right")
+        tt.add_column("Tokens", justify="right")
         tt.add_column("%", justify="right")
         tt.add_column("Calls", justify="right")
         total_tt_tokens = sum(int(item.get("output_tokens", 0)) for item in top_tools) or 1
@@ -314,7 +314,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         if report.get("component_stats"):
             print(f"Components: {report['component_stats']}")
         if report.get("by_activity"):
-            print(f"By Activity: {report['by_activity']}")
+            print(f"Session Categories: {report['by_activity']}")
         if report.get("top_sessions"):
             print(f"Top Sessions: {report['top_sessions']}")
         return
@@ -369,7 +369,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         tt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
         tt.add_column("", style="bold")
         tt.add_column("", justify="left")
-        tt.add_column("Output Tokens", justify="right")
+        tt.add_column("Tokens", justify="right")
         tt.add_column("%", justify="right")
         tt.add_column("Calls", justify="right")
         total_tt_tokens = sum(int(item.get("output_tokens", 0)) for item in top_tools) or 1
@@ -469,44 +469,61 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     if panels:
         console.print(Columns(panels, equal=False, padding=0))
 
-    # Build By Activity panel
+    # Build Session Categories panel
     by_activity = report.get("by_activity")
+    act_panel = None
     if isinstance(by_activity, list) and by_activity:
         act = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
         act.add_column("", style="bold")
         act.add_column("", justify="left")
         act.add_column("Tokens", justify="right")
-        act.add_column("Turns", justify="right")
-        act.add_column("Cost", justify="right")
-        max_tokens = max((int(row.get("tokens", 0)) for row in by_activity), default=1) or 1
-        for row in by_activity:
+        act.add_column("Calls", justify="right")
+        act.add_column("API", justify="right")
+        act.add_column("Estimated", justify="right")
+        cat_rows = by_activity[:10]
+        max_tokens = max((int(row.get("tokens", 0)) for row in cat_rows), default=1) or 1
+        for row in cat_rows:
             tokens = int(row.get("tokens", 0))
             bar_text = _color_bar(tokens, max_tokens, COL_GREEN, width=10)
             act.add_row(
                 str(row.get("label", row.get("category", "?"))),
                 bar_text,
                 _fmt_int(tokens),
-                _fmt_int(row.get("turns", 0)),
-                _fmt_float(row.get("cost", 0)),
+                _fmt_int(row.get("calls", 0)),
+                _fmt_float(row.get("api_cost", 0)),
+                _fmt_float(row.get("estimated_cost", 0)),
             )
-        console.print(Panel(act, title="By Activity", border_style=COL_GREEN))
+        act_panel = Panel(act, title="Session Categories", border_style=COL_GREEN)
 
     # Build Top Sessions panel
+    top_sess_panel = None
     top_sessions = report.get("top_sessions")
     if isinstance(top_sessions, list) and top_sessions:
         ts = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
         ts.add_column("", style="bold")
         ts.add_column("", justify="left")
         ts.add_column("Tokens", justify="right")
-        ts.add_column("Cost", justify="right")
-        max_tokens = max((int(row.get("tokens", 0)) for row in top_sessions), default=1) or 1
-        for row in top_sessions:
+        ts.add_column("API", justify="right")
+        ts.add_column("Estimated", justify="right")
+        sess_rows = top_sessions[:10]
+        max_tokens = max((int(row.get("tokens", 0)) for row in sess_rows), default=1) or 1
+        for row in sess_rows:
             tokens = int(row.get("tokens", 0))
             bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=10)
             ts.add_row(
                 str(row.get("root_dir", "-")),
                 bar_text,
                 _fmt_int(tokens),
-                _fmt_float(row.get("cost", 0)),
+                _fmt_float(row.get("api_cost", 0)),
+                _fmt_float(row.get("estimated_cost", 0)),
             )
-        console.print(Panel(ts, title="Top Sessions", border_style=COL_ORANGE))
+        top_sess_panel = Panel(ts, title="Top Sessions", border_style=COL_ORANGE)
+
+    # Layout: Session Categories | Top Sessions
+    if act_panel or top_sess_panel:
+        cat_group = []
+        if act_panel:
+            cat_group.append(act_panel)
+        if top_sess_panel:
+            cat_group.append(top_sess_panel)
+        console.print(Columns(cat_group, equal=False, padding=0))

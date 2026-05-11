@@ -140,3 +140,19 @@ def test_month_command_invalid_number(monkeypatch) -> None:
     result = runner.invoke(cli.main, ["month", "13"])
     assert result.exit_code != 0
     assert "Invalid month" in result.output
+
+
+def test_json_command_includes_by_activity_and_top_sessions(monkeypatch) -> None:
+    """JSON output includes by_activity and top_sessions fields."""
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["json", "--period", "daily"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "by_activity" in payload
+    assert "top_sessions" in payload
+    # by_activity is a list
+    assert isinstance(payload["by_activity"], list)
+    # top_sessions is a list
+    assert isinstance(payload["top_sessions"], list)

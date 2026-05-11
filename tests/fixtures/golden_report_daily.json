@@ -53,5 +53,23 @@
       "estimated_cost": 0.0,
       "cost": 0.012
     }
+  ],
+  "by_activity": [
+    {
+      "category": "general",
+      "label": "General",
+      "tokens": 184,
+      "calls": 1,
+      "api_cost": 0.012,
+      "estimated_cost": 0.0
+    }
+  ],
+  "top_sessions": [
+    {
+      "root_dir": "ses_fixture_1",
+      "tokens": 184,
+      "api_cost": 0.012,
+      "estimated_cost": 0.0
+    }
   ]
 }

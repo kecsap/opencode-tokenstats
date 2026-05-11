@@ -147,6 +147,33 @@ The OpenCode Contribution table shows core OpenCode tools and built-in component
 
 The MCP Servers table shows only MCP server tool calls. Skill calls, subagent calls, and core OpenCode tools are excluded. This table provides a narrower view focused on external tool dependencies.
 
+## By Activity
+
+The **By Activity** panel classifies sessions into activity categories based on tools used, showing aggregated token usage, interaction volume, and cost per category:
+
+- **category**: Activity label (e.g., `Coding`, `Exploration`, `Build/Deploy`)
+- **tokens**: Total session tokens in this category
+- **turns**: Total API calls (model invocations) across sessions
+- **cost**: Combined estimated cost (USD)
+
+Classification rules (tool-pattern first):
+
+- **Coding**: Session used edit tools (`edit`, `write`, `apply_patch`, `apply`)
+- **Build/Deploy**: Bash-only sessions (no edits)
+- **Exploration**: Search/read-only patterns (`grep`, `glob`, `read`)
+- **Planning**: Task tools without edits, or `plan`/`implement` skills
+- **Delegation**: Sessions with subagent calls (`is_subagent` flag)
+- **Conversation**: No tools used
+- **General**: Fallback for other tool patterns (MCP servers, skill tool, etc.)
+
+## Top Sessions
+
+The **Top Sessions** panel shows the 5 most expensive sessions by cost:
+
+- **root dir**: Last directory segment of session title (e.g., `/home/user/eju` -> `eju`). Falls back to session ID if title is unavailable.
+- **tokens**: Total session tokens
+- **cost**: Estimated cost (USD)
+
 ## Model Aliases (models.conf)
 
 Merge multiple model IDs under a single alias via `models.conf`:

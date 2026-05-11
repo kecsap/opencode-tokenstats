@@ -533,9 +533,9 @@ def _build_period_report(
     aliases = load_model_aliases(options.get("model_alias_file"))
     model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0})
 
-    # Build session title lookup for root_dir extraction
-    session_titles: dict[str, str] = {
-        str(sess.get("id", "")): str(sess.get("title", "")) for sess in sessions
+    # Build directory lookup for root_dir extraction (from session.directory)
+    session_dirs: dict[str, str] = {
+        str(sess.get("id", "")): str(sess.get("directory", "")) for sess in sessions
     }
     # Activity aggregation maps
     activity_map: dict[str, dict[str, object]] = {}
@@ -566,19 +566,21 @@ def _build_period_report(
         # Classify session and aggregate by activity
         category = classify_session(canonical)
         if category not in activity_map:
-            activity_map[category] = {"tokens": 0, "turns": 0, "cost": 0.0}
+            activity_map[category] = {"tokens": 0, "calls": 0, "api_cost": 0.0, "estimated_cost": 0.0}
         activity_map[category]["tokens"] += canonical.session_total_tokens
-        activity_map[category]["turns"] += canonical.api_calls
-        activity_map[category]["cost"] += canonical.estimated_cost_usd
+        activity_map[category]["calls"] += canonical.api_calls
+        activity_map[category]["api_cost"] += canonical.actual_cost_usd
+        activity_map[category]["estimated_cost"] += canonical.estimated_cost_usd
 
         # Build per-session row for top_sessions
-        raw_title = session_titles.get(canonical.session_id, "")
-        root_dir = extract_root_dir(raw_title)
+        raw_dir = session_dirs.get(canonical.session_id, "")
+        root_dir = extract_root_dir(raw_dir)
         session_rows.append(
             {
                 "root_dir": root_dir,
                 "tokens": canonical.session_total_tokens,
-                "cost": round(canonical.estimated_cost_usd, 6),
+                "api_cost": round(canonical.actual_cost_usd, 6),
+                "estimated_cost": round(canonical.estimated_cost_usd, 6),
             }
         )
 
@@ -601,16 +603,34 @@ def _build_period_report(
             "category": cat,
             "label": CATEGORY_LABELS.get(cat, cat.title()),
             "tokens": data["tokens"],
-            "turns": data["turns"],
-            "cost": round(data["cost"], 6),
+            "calls": data["calls"],
+            "api_cost": round(data["api_cost"], 6),
+            "estimated_cost": round(data["estimated_cost"], 6),
         }
         for cat, data in activity_map.items()
     ]
-    by_activity.sort(key=lambda x: x["cost"], reverse=True)
+    by_activity.sort(key=lambda x: x["api_cost"] if x["api_cost"] > 0 else x["estimated_cost"], reverse=True)
 
-    # Format top_sessions sorted by cost desc, limit 5
-    session_rows.sort(key=lambda x: x["cost"], reverse=True)
-    top_sessions = session_rows[:5]
+   # Aggregate sessions by root_dir, summing tokens and cost
+    dir_map: dict[str, dict[str, object]] = {}
+    for row in session_rows:
+        rd = row["root_dir"]
+        if rd not in dir_map:
+            dir_map[rd] = {"root_dir": rd, "tokens": 0, "api_cost": 0.0, "estimated_cost": 0.0}
+        dir_map[rd]["tokens"] += row["tokens"]
+        dir_map[rd]["api_cost"] += row["api_cost"]
+        dir_map[rd]["estimated_cost"] += row["estimated_cost"]
+    top_sessions = [
+        {
+            "root_dir": rd,
+            "tokens": data["tokens"],
+            "api_cost": round(data["api_cost"], 6),
+            "estimated_cost": round(data["estimated_cost"], 6),
+        }
+        for rd, data in dir_map.items()
+    ]
+    top_sessions.sort(key=lambda x: x["api_cost"] if x["api_cost"] > 0 else x["estimated_cost"], reverse=True)
+    top_sessions = top_sessions[:10]
 
     return {
         "sessions": used,
