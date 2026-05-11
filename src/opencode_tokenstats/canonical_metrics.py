@@ -260,6 +260,11 @@ _CORE_OPENCODE_TOOLS = {
     "apply",
     "webfetch",
     "invalid",
+    "edit",
+    "question",
+    "compress",
+    "write",
+    "quota",
 }
 _CORE_OPENCODE_SKILLS = {"plan", "implement"}
 _CORE_OPENCODE_SUBAGENTS = {"explore", "general"}

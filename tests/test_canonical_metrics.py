@@ -584,11 +584,194 @@ def test_subagent_calls_excluded_from_mcp_insights() -> None:
         }
     ]
     out = build_canonical_metrics("s-mcp-subagent", messages)
-
-    # MCP rows should only contain lean-ctx, not explore subagent
     mcp_names = {r["name"] for r in out.mcp_rows}
     assert "lean-ctx" in mcp_names
     assert "explore" not in mcp_names
+
+
+def test_edit_tool_excluded_from_mcp_insights() -> None:
+    """Test that the 'edit' core tool is not included in MCP Insights."""
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "edit",
+                    "state": {
+                        "status": "completed",
+                        "output": "file modified",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "lean-ctx_ctx_read",
+                    "state": {"status": "completed", "output": "file content"},
+                },
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-edit", messages)
+    mcp_names = {r["name"] for r in out.mcp_rows}
+    assert "edit" not in mcp_names
+    assert "lean-ctx" in mcp_names
+    core_names = {r["component_name"] for r in out.core_rows}
+    assert "edit" in core_names
+
+
+def test_question_tool_excluded_from_mcp_insights() -> None:
+    """Test that the 'question' core tool is not included in MCP Insights."""
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "question",
+                    "state": {
+                        "status": "completed",
+                        "output": "user answered",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "lean-ctx_ctx_read",
+                    "state": {"status": "completed", "output": "file content"},
+                },
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-question", messages)
+    mcp_names = {r["name"] for r in out.mcp_rows}
+    assert "question" not in mcp_names
+    assert "lean-ctx" in mcp_names
+    core_names = {r["component_name"] for r in out.core_rows}
+    assert "question" in core_names
+
+
+def test_compress_tool_excluded_from_mcp_insights() -> None:
+    """Test that the 'compress' core tool is not included in MCP Insights."""
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "compress",
+                    "state": {
+                        "status": "completed",
+                        "output": "context compressed",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "lean-ctx_ctx_read",
+                    "state": {"status": "completed", "output": "file content"},
+                },
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-compress", messages)
+    mcp_names = {r["name"] for r in out.mcp_rows}
+    assert "compress" not in mcp_names
+    assert "lean-ctx" in mcp_names
+    core_names = {r["component_name"] for r in out.core_rows}
+    assert "compress" in core_names
+
+
+def test_write_tool_excluded_from_mcp_insights() -> None:
+    """Test that the 'write' core tool is not included in MCP Insights."""
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "write",
+                    "state": {
+                        "status": "completed",
+                        "output": "file written",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "lean-ctx_ctx_read",
+                    "state": {"status": "completed", "output": "file content"},
+                },
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-write", messages)
+    mcp_names = {r["name"] for r in out.mcp_rows}
+    assert "write" not in mcp_names
+    assert "lean-ctx" in mcp_names
+    core_names = {r["component_name"] for r in out.core_rows}
+    assert "write" in core_names
+
+
+def test_quota_tool_excluded_from_mcp_insights() -> None:
+    """Test that the 'quota' core tool is not included in MCP Insights."""
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "quota",
+                    "state": {
+                        "status": "completed",
+                        "output": "quota status",
+                    },
+                },
+                {
+                    "type": "tool",
+                    "tool": "lean-ctx_ctx_read",
+                    "state": {"status": "completed", "output": "file content"},
+                },
+            ],
+        }
+    ]
+    out = build_canonical_metrics("s-quota", messages)
+    mcp_names = {r["name"] for r in out.mcp_rows}
+    assert "quota" not in mcp_names
+    assert "lean-ctx" in mcp_names
+    core_names = {r["component_name"] for r in out.core_rows}
+    assert "quota" in core_names
 
 
 def test_additional_core_components_classification() -> None:
