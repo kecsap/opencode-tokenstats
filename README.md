@@ -143,9 +143,9 @@ The Component Contribution table groups all calls by component family (e.g., `le
 
 The OpenCode Contribution table shows core OpenCode tools and built-in components (`read`, `bash`, `grep`, `glob`, `todowrite`, `apply_patch`, `webfetch`, core skills like `plan`/`implement`, and core subagents like `explore`/`general`). `invalid` tool rows are merged into `general` in this table. These are internal tools that are not MCP server calls, shown separately from external component contributions.
 
-## MCP Insights
+## MCP Servers
 
-The MCP Insights table shows only MCP server tool calls. Skill calls, subagent calls, and core OpenCode tools are excluded. This table provides a narrower view focused on external tool dependencies.
+The MCP Servers table shows only MCP server tool calls. Skill calls, subagent calls, and core OpenCode tools are excluded. This table provides a narrower view focused on external tool dependencies.
 
 ## Model Aliases (models.conf)
 

@@ -358,7 +358,7 @@ def _build_mcp_rows(tool_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         tool = str(row["tool"])
         if _LOCAL_TOOL_RE.match(tool):
             continue
-        # Exclude skill/subagent/core calls from MCP Insights - they are not MCP tools
+        # Exclude skill/subagent/core calls from MCP Servers - they are not MCP tools
         if row.get("is_skill") or row.get("is_subagent") or row.get("is_core"):
             continue
         group = _component_group(tool)
@@ -382,7 +382,7 @@ def _build_mcp_rows(tool_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     out.sort(key=lambda x: int(x["tokens"]), reverse=True)
-    return out[:10]
+    return out
 
 
 def _extract_available_skills(messages: list[dict[str, Any]]) -> list[dict[str, int | str]]:

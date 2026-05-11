@@ -202,12 +202,15 @@ def print_session_report(
         tt.add_column("", style="bold")
         tt.add_column("", justify="left")
         tt.add_column("Output Tokens", justify="right")
+        tt.add_column("%", justify="right")
         tt.add_column("Calls", justify="right")
+        total_tt_tokens = sum(int(item.get("output_tokens", 0)) for item in top_tools) or 1
         max_tokens = max((int(item.get("output_tokens", 0)) for item in top_tools), default=1) or 1
-        for item in top_tools:
+        for item in top_tools[:13]:
             tokens = int(item.get("output_tokens", 0))
+            pct = tokens / total_tt_tokens * 100
             bar_text = _color_bar(tokens, max_tokens, COL_GOLD, width=10)
-            tt.add_row(str(item["name"]), bar_text, _fmt_int(tokens), _fmt_int(item["call_count"]))
+            tt.add_row(str(item["name"]), bar_text, _fmt_int(tokens), f"{pct:.1f}", _fmt_int(item["call_count"]))
         console.print(Panel(tt, title="Top Tools", border_style=COL_GOLD))
 
     if model_costs:
@@ -217,7 +220,7 @@ def print_session_report(
         mt.add_column("API", justify="right")
         mt.add_column("Estimated", justify="right")
         max_api_cost = max((float(item.get("api_cost", 0)) for item in model_costs), default=1) or 1
-        for item in model_costs[:12]:
+        for item in model_costs[:13]:
             api_cost = float(item.get("api_cost", 0))
             bar_text = _color_bar(api_cost, max_api_cost, COL_GREEN, width=10)
             mt.add_row(
@@ -238,7 +241,7 @@ def print_session_report(
         mcp.add_column("Tok/Call", justify="right")
         mcp_filtered = [r for r in mcp_stats["rows"] if r.get("name") not in {"grep", "invalid", "webfetch"}]
         max_tokens = max((r.get("tokens", 0) for r in mcp_filtered), default=1) or 1
-        for row in mcp_filtered:
+        for row in mcp_filtered[:15]:
             tokens = int(row.get("tokens", 0))
             bar_text = _color_bar(tokens, max_tokens, COL_CYAN, width=10)
             mcp.add_row(
@@ -249,21 +252,25 @@ def print_session_report(
                 _fmt_int(row.get("calls")),
                 _fmt_float(row.get("tokens_per_call")),
             )
-        console.print(Panel(mcp, title="MCP Insights", border_style=COL_CYAN))
+        console.print(Panel(mcp, title="MCP Servers", border_style=COL_CYAN))
 
     if core_stats and core_stats.get("rows"):
         oc = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
         oc.add_column("", style="bold")
         oc.add_column("", justify="left")
         oc.add_column("Tokens", justify="right")
+        oc.add_column("%", justify="right")
+        total_core_tokens = sum(int(row.get("tokens", 0)) for row in core_stats["rows"]) or 1
         max_tokens = max((int(row.get("tokens", 0)) for row in core_stats["rows"]), default=1) or 1
-        for row in core_stats["rows"]:
+        for row in core_stats["rows"][:15]:
             tokens = int(row.get("tokens", 0))
+            pct = tokens / total_core_tokens * 100
             bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=10)
             oc.add_row(
                 str(row.get("component_name")),
                 bar_text,
                 _fmt_int(row.get("tokens")),
+                f"{pct:.1f}",
             )
         console.print(Panel(oc, title="OpenCode Contribution", border_style=COL_ORANGE))
 
@@ -338,7 +345,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         mt.add_column("API", justify="right")
         mt.add_column("Estimated", justify="right")
         max_api_cost = max((float(item.get("api_cost", 0)) for item in model_costs), default=1) or 1
-        for item in model_costs[:12]:
+        for item in model_costs[:13]:
             api_cost = float(item.get("api_cost", 0))
             bar_text = _color_bar(api_cost, max_api_cost, COL_GREEN, width=10)
             mt.add_row(
@@ -351,61 +358,46 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     else:
         model_costs_panel = None
 
-    # Layout: left column = Period Summary + Token Composition (stacked), right column = Model Costs
+    # Build Top Tools panel
+    top_tools = report.get("top_tools")
+    top_tools_panel = None
+    if isinstance(top_tools, list) and top_tools:
+        tt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        tt.add_column("", style="bold")
+        tt.add_column("", justify="left")
+        tt.add_column("Output Tokens", justify="right")
+        tt.add_column("%", justify="right")
+        tt.add_column("Calls", justify="right")
+        total_tt_tokens = sum(int(item.get("output_tokens", 0)) for item in top_tools) or 1
+        max_tokens = max((int(item.get("output_tokens", 0)) for item in top_tools), default=1) or 1
+        for item in top_tools[:13]:
+            tokens = int(item.get("output_tokens", 0))
+            pct = tokens / total_tt_tokens * 100
+            bar_text = _color_bar(tokens, max_tokens, COL_GOLD, width=10)
+            tt.add_row(str(item["name"]), bar_text, _fmt_int(tokens), f"{pct:.1f}", _fmt_int(item["call_count"]))
+        top_tools_panel = Panel(tt, title="Top Tools", border_style=COL_GOLD)
+
     summary_panel = Panel(summary_table, title="Period Summary", border_style=COL_MAGENTA)
     comp_panel = Panel(comp_table, title="Token Composition", border_style=COL_BLUE)
     left_group = Group(summary_panel, comp_panel)
+
+    # Layout: left column (Summary + Composition) | Model Costs | Top Tools
+    right_side = []
     if model_costs_panel:
-        console.print(Columns([left_group, model_costs_panel], equal=False, padding=0))
+        right_side.append(model_costs_panel)
+    if top_tools_panel:
+        right_side.append(top_tools_panel)
+    if right_side:
+        console.print(Columns([left_group] + right_side, equal=False, padding=0))
     else:
         console.print(left_group)
 
-    top_tools = report.get("top_tools")
     mcp_stats = report.get("mcp_stats")
     core_stats = report.get("core_stats")
     component_stats = report.get("component_stats")
 
-    # Build panels for MCP Insights, OpenCode Contribution, Component Contribution, Top Tools
+    # Build panels for Component Contribution, OpenCode Contribution, MCP Servers
     panels = []
-
-    if isinstance(mcp_stats, dict) and mcp_stats.get("rows"):
-        mcp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
-        mcp.add_column("", style="bold")
-        mcp.add_column("", justify="left")
-        mcp.add_column("Tokens", justify="right")
-        mcp.add_column("%", justify="right")
-        mcp.add_column("Calls", justify="right")
-        mcp.add_column("Tok/Call", justify="right")
-        mcp_filtered = [r for r in mcp_stats["rows"] if r.get("name") not in {"grep", "invalid", "webfetch"}]
-        max_tokens = max((r.get("tokens", 0) for r in mcp_filtered), default=1) or 1
-        for row in mcp_filtered:
-            tokens = int(row.get("tokens", 0))
-            bar_text = _color_bar(tokens, max_tokens, COL_CYAN, width=10)
-            mcp.add_row(
-                str(row.get("name")),
-                bar_text,
-                _fmt_int(tokens),
-                _fmt_float(row.get("percent")),
-                _fmt_int(row.get("calls")),
-                _fmt_float(row.get("tokens_per_call")),
-            )
-        panels.append(Panel(mcp, title="MCP Insights", border_style=COL_CYAN))
-
-    if isinstance(core_stats, dict) and core_stats.get("rows"):
-        oc = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
-        oc.add_column("", style="bold")
-        oc.add_column("", justify="left")
-        oc.add_column("Tokens", justify="right")
-        max_tokens = max((int(row.get("tokens", 0)) for row in core_stats["rows"]), default=1) or 1
-        for row in core_stats["rows"]:
-            tokens = int(row.get("tokens", 0))
-            bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=10)
-            oc.add_row(
-                str(row.get("component_name")),
-                bar_text,
-                _fmt_int(row.get("tokens")),
-            )
-        panels.append(Panel(oc, title="OpenCode Contribution", border_style=COL_ORANGE))
 
     if isinstance(component_stats, dict) and component_stats.get("rows"):
         ct = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
@@ -427,19 +419,48 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
             )
         panels.append(Panel(ct, title="Component Contribution", border_style=COL_MAGENTA))
 
-    if isinstance(top_tools, list) and top_tools:
-        tt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
-        tt.add_column("", style="bold")
-        tt.add_column("", justify="left")
-        tt.add_column("Output Tokens", justify="right")
-        tt.add_column("Calls", justify="right")
-        max_tokens = max((int(item.get("output_tokens", 0)) for item in top_tools), default=1) or 1
-        for item in top_tools:
-            tokens = int(item.get("output_tokens", 0))
-            bar_text = _color_bar(tokens, max_tokens, COL_GOLD, width=10)
-            tt.add_row(str(item.get("name")), bar_text, _fmt_int(tokens), _fmt_int(item.get("call_count")))
-        panels.append(Panel(tt, title="Top Tools", border_style=COL_GOLD))
+    if isinstance(core_stats, dict) and core_stats.get("rows"):
+        oc = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        oc.add_column("", style="bold")
+        oc.add_column("", justify="left")
+        oc.add_column("Tokens", justify="right")
+        oc.add_column("%", justify="right")
+        total_core_tokens = sum(int(row.get("tokens", 0)) for row in core_stats["rows"]) or 1
+        max_tokens = max((int(row.get("tokens", 0)) for row in core_stats["rows"]), default=1) or 1
+        for row in core_stats["rows"][:15]:
+            tokens = int(row.get("tokens", 0))
+            pct = tokens / total_core_tokens * 100
+            bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=10)
+            oc.add_row(
+                str(row.get("component_name")),
+                bar_text,
+                _fmt_int(row.get("tokens")),
+                f"{pct:.1f}",
+            )
+        panels.append(Panel(oc, title="OpenCode Contribution", border_style=COL_ORANGE))
 
-    # Print all three panels in one row
+    if isinstance(mcp_stats, dict) and mcp_stats.get("rows"):
+        mcp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        mcp.add_column("", style="bold")
+        mcp.add_column("", justify="left")
+        mcp.add_column("Tokens", justify="right")
+        mcp.add_column("%", justify="right")
+        mcp.add_column("Calls", justify="right")
+        mcp.add_column("Tok/Call", justify="right")
+        mcp_filtered = [r for r in mcp_stats["rows"] if r.get("name") not in {"grep", "invalid", "webfetch"}]
+        max_tokens = max((r.get("tokens", 0) for r in mcp_filtered), default=1) or 1
+        for row in mcp_filtered[:15]:
+            tokens = int(row.get("tokens", 0))
+            bar_text = _color_bar(tokens, max_tokens, COL_CYAN, width=10)
+            mcp.add_row(
+                str(row.get("name")),
+                bar_text,
+                _fmt_int(tokens),
+                _fmt_float(row.get("percent")),
+                _fmt_int(row.get("calls")),
+                _fmt_float(row.get("tokens_per_call")),
+            )
+        panels.append(Panel(mcp, title="MCP Servers", border_style=COL_CYAN))
+
     if panels:
         console.print(Columns(panels, equal=False, padding=0))

@@ -463,8 +463,8 @@ def test_skill_family_merges_multiple_hyphenated_skills_with_same_prefix() -> No
     assert implement_family[0]["calls"] == 2
 
 
-def test_skill_calls_excluded_from_mcp_insights() -> None:
-    """Test that skill calls are not included in MCP Insights."""
+def test_skill_calls_excluded_from_mcp_servers() -> None:
+    """Test that skill calls are not included in MCP Servers."""
     messages = [
         {
             "role": "assistant",
@@ -553,8 +553,8 @@ def test_subagent_call_attribution() -> None:
     assert any(r["component_name"] == "lean-ctx_ctx_read" for r in tool_rows)
 
 
-def test_subagent_calls_excluded_from_mcp_insights() -> None:
-    """Test that subagent calls are not included in MCP Insights."""
+def test_subagent_calls_excluded_from_mcp_servers() -> None:
+    """Test that subagent calls are not included in MCP Servers."""
     messages = [
         {
             "role": "assistant",
@@ -589,8 +589,8 @@ def test_subagent_calls_excluded_from_mcp_insights() -> None:
     assert "explore" not in mcp_names
 
 
-def test_edit_tool_excluded_from_mcp_insights() -> None:
-    """Test that the 'edit' core tool is not included in MCP Insights."""
+def test_edit_tool_excluded_from_mcp_servers() -> None:
+    """Test that the 'edit' core tool is not included in MCP Servers."""
     messages = [
         {
             "role": "assistant",
@@ -626,8 +626,8 @@ def test_edit_tool_excluded_from_mcp_insights() -> None:
     assert "edit" in core_names
 
 
-def test_question_tool_excluded_from_mcp_insights() -> None:
-    """Test that the 'question' core tool is not included in MCP Insights."""
+def test_question_tool_excluded_from_mcp_servers() -> None:
+    """Test that the 'question' core tool is not included in MCP Servers."""
     messages = [
         {
             "role": "assistant",
@@ -663,8 +663,8 @@ def test_question_tool_excluded_from_mcp_insights() -> None:
     assert "question" in core_names
 
 
-def test_compress_tool_excluded_from_mcp_insights() -> None:
-    """Test that the 'compress' core tool is not included in MCP Insights."""
+def test_compress_tool_excluded_from_mcp_servers() -> None:
+    """Test that the 'compress' core tool is not included in MCP Servers."""
     messages = [
         {
             "role": "assistant",
@@ -700,8 +700,8 @@ def test_compress_tool_excluded_from_mcp_insights() -> None:
     assert "compress" in core_names
 
 
-def test_write_tool_excluded_from_mcp_insights() -> None:
-    """Test that the 'write' core tool is not included in MCP Insights."""
+def test_write_tool_excluded_from_mcp_servers() -> None:
+    """Test that the 'write' core tool is not included in MCP Servers."""
     messages = [
         {
             "role": "assistant",
