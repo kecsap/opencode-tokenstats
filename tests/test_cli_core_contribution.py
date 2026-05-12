@@ -5,8 +5,8 @@ from opencode_tokenstats.cli import _finalize_component_stats_canonical, _finali
 
 def test_component_stats_include_opencode_core_row() -> None:
     component_map = {
-        "tool|lean-ctx|lean-ctx_ctx_read": 100.0,
-        "tool|jcodemunch|jcodemunch_search_text": 50.0,
+        "tool|lean-ctx|lean-ctx_ctx_read": {"tokens": 100.0, "calls": 5},
+        "tool|jcodemunch|jcodemunch_search_text": {"tokens": 50.0, "calls": 3},
     }
     out = _finalize_component_stats_canonical(component_map, core_tokens=40.0)
     rows = out["rows"]
@@ -16,7 +16,7 @@ def test_component_stats_include_opencode_core_row() -> None:
 
 
 def test_core_stats_merge_invalid_into_general() -> None:
-    out = _finalize_core_stats({"invalid": 13462.0, "general": 202.0, "read": 10.0})
+    out = _finalize_core_stats({"invalid": {"tokens": 13462.0, "calls": 10}, "general": {"tokens": 202.0, "calls": 2}, "read": {"tokens": 10.0, "calls": 1}})
     rows = out["rows"]
     names = {r["component_name"] for r in rows}
 

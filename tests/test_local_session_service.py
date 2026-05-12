@@ -17,17 +17,18 @@ def test_list_sessions_from_sqlite(tmp_path) -> None:
             id TEXT PRIMARY KEY,
             title TEXT,
             parent_id TEXT,
-            time_created INTEGER
+            time_created INTEGER,
+            directory TEXT
         )
-        """
+    """
     )
     conn.execute(
-        "INSERT INTO session (id, title, parent_id, time_created) VALUES (?, ?, ?, ?)",
-        ("s1", "Main", None, 100),
+        "INSERT INTO session (id, title, parent_id, time_created, directory) VALUES (?, ?, ?, ?, ?)",
+        ("s1", "Main", None, 100, "/home/user/project1"),
     )
     conn.execute(
-        "INSERT INTO session (id, title, parent_id, time_created) VALUES (?, ?, ?, ?)",
-        ("s2", "Child", "s1", 200),
+        "INSERT INTO session (id, title, parent_id, time_created, directory) VALUES (?, ?, ?, ?, ?)",
+        ("s2", "Child", "s1", 200, "/home/user/project2"),
     )
     conn.commit()
     conn.close()

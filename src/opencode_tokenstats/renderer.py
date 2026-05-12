@@ -126,7 +126,7 @@ def _build_composition_table(token_composition: dict[str, int], total_tokens: in
         if key in excluded:
             continue
         color = color_map.get(key, COL_TOTAL)
-        bar_text = _color_bar(value, max_val, color, width=10)
+        bar_text = _color_bar(value, max_val, color, width=6)
         pct = value / total_tokens * 100 if total_tokens else 0
         comp.add_row(key, bar_text, _fmt_int(value), f"{pct:.1f}")
 
@@ -150,7 +150,7 @@ def print_status_report(mode: str, sessions: list[dict[str, object]]) -> None:
     table.add_row("Mode", str(mode))
     table.add_row("Sessions", _fmt_int(len(sessions)))
     table.add_row("Latest Session", str(latest))
-    console.print(Panel(table, title="Status", border_style=COL_CYAN))
+    console.print(Panel(table, title="[bold]Status[/bold]", border_style=COL_CYAN))
 
 
 def print_session_report(
@@ -191,11 +191,11 @@ def print_session_report(
     table.add_row("API calls", _fmt_int(api_calls))
     table.add_row("Tokens", _fmt_int(tokens))
     table.add_row("Cost (API)", _fmt_float(api_cost))
-    console.print(Panel(table, title="Session", border_style=COL_GREEN))
+    console.print(Panel(table, title="[bold]Session[/bold]", border_style=COL_GREEN))
 
     if token_composition:
         comp = _build_composition_table(token_composition, tokens)
-        console.print(Panel(comp, title="Token Composition", border_style=COL_BLUE))
+        console.print(Panel(comp, title="[bold]Token Composition[/bold]", border_style=COL_BLUE))
 
     if top_tools:
         tt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
@@ -204,32 +204,34 @@ def print_session_report(
         tt.add_column("Tokens", justify="right")
         tt.add_column("%", justify="right")
         tt.add_column("Calls", justify="right")
+        tt.add_column("Tok/Call", justify="right")
         total_tt_tokens = sum(int(item.get("output_tokens", 0)) for item in top_tools) or 1
         max_tokens = max((int(item.get("output_tokens", 0)) for item in top_tools), default=1) or 1
         for item in top_tools[:13]:
             tokens = int(item.get("output_tokens", 0))
+            calls = int(item.get("call_count", 0))
             pct = tokens / total_tt_tokens * 100
-            bar_text = _color_bar(tokens, max_tokens, COL_GOLD, width=10)
-            tt.add_row(str(item["name"]), bar_text, _fmt_int(tokens), f"{pct:.1f}", _fmt_int(item["call_count"]))
-        console.print(Panel(tt, title="Top Tools", border_style=COL_GOLD))
+            bar_text = _color_bar(tokens, max_tokens, COL_GOLD, width=6)
+            tt.add_row(str(item["name"]), bar_text, _fmt_int(tokens), f"{pct:.1f}", _fmt_int(calls), _fmt_float(tokens / calls if calls else 0))
+        console.print(Panel(tt, title="[bold]Top Tools[/bold]", border_style=COL_GOLD))
 
     if model_costs:
         mt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
         mt.add_column("", style="bold", justify="left")
         mt.add_column("", justify="left")
         mt.add_column("API", justify="right")
-        mt.add_column("Estimated", justify="right")
+        mt.add_column("Est.", justify="right")
         max_api_cost = max((float(item.get("api_cost", 0)) for item in model_costs), default=1) or 1
         for item in model_costs[:13]:
             api_cost = float(item.get("api_cost", 0))
-            bar_text = _color_bar(api_cost, max_api_cost, COL_GREEN, width=10)
+            bar_text = _color_bar(api_cost, max_api_cost, COL_GREEN, width=6)
             mt.add_row(
                 str(item.get("model")),
                 bar_text,
                 _fmt_float(api_cost),
                 _fmt_float(item.get("estimated_cost")),
             )
-        console.print(Panel(mt, title="Model Costs", border_style=COL_GREEN))
+        console.print(Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN))
 
     if mcp_stats and mcp_stats.get("rows"):
         mcp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
@@ -243,16 +245,16 @@ def print_session_report(
         max_tokens = max((r.get("tokens", 0) for r in mcp_filtered), default=1) or 1
         for row in mcp_filtered[:15]:
             tokens = int(row.get("tokens", 0))
-            bar_text = _color_bar(tokens, max_tokens, COL_CYAN, width=10)
+            bar_text = _color_bar(tokens, max_tokens, COL_CYAN, width=6)
             mcp.add_row(
                 str(row.get("name")),
                 bar_text,
                 _fmt_int(tokens),
-                _fmt_float(row.get("percent")),
+                f"{row.get('percent', 0):.1f}",
                 _fmt_int(row.get("calls")),
                 _fmt_float(row.get("tokens_per_call")),
             )
-        console.print(Panel(mcp, title="MCP Servers", border_style=COL_CYAN))
+        console.print(Panel(mcp, title="[bold]MCP Servers[/bold]", border_style=COL_CYAN))
 
     if core_stats and core_stats.get("rows"):
         oc = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
@@ -260,39 +262,49 @@ def print_session_report(
         oc.add_column("", justify="left")
         oc.add_column("Tokens", justify="right")
         oc.add_column("%", justify="right")
+        oc.add_column("Calls", justify="right")
+        oc.add_column("Tok/Call", justify="right")
         total_core_tokens = sum(int(row.get("tokens", 0)) for row in core_stats["rows"]) or 1
         max_tokens = max((int(row.get("tokens", 0)) for row in core_stats["rows"]), default=1) or 1
         for row in core_stats["rows"][:15]:
             tokens = int(row.get("tokens", 0))
+            calls = int(row.get("calls", 0))
             pct = tokens / total_core_tokens * 100
-            bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=10)
+            bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=6)
             oc.add_row(
                 str(row.get("component_name")),
                 bar_text,
                 _fmt_int(row.get("tokens")),
                 f"{pct:.1f}",
+                _fmt_int(calls),
+                _fmt_float(tokens / calls if calls else 0),
             )
-        console.print(Panel(oc, title="OpenCode Contribution", border_style=COL_ORANGE))
+        console.print(Panel(oc, title="[bold]OpenCode Contribution[/bold]", border_style=COL_ORANGE))
 
     if component_stats and component_stats.get("rows"):
         ct = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
-        ct.add_column("Type", style="bold")
-        ct.add_column("Group")
+        ct.add_column("Type")
+        ct.add_column("", style="bold")
         ct.add_column("", justify="left")
         ct.add_column("Tokens", justify="right")
         ct.add_column("%", justify="right")
+        ct.add_column("Calls", justify="right")
+        ct.add_column("Tok/Call", justify="right")
         max_tokens = max((int(row.get("tokens", 0)) for row in component_stats["rows"]), default=1) or 1
         for row in component_stats["rows"]:
             tokens = int(row.get("tokens", 0))
-            bar_text = _color_bar(tokens, max_tokens, COL_MAGENTA, width=10)
+            calls = int(row.get("calls", 0))
+            bar_text = _color_bar(tokens, max_tokens, COL_MAGENTA, width=6)
             ct.add_row(
                 str(row.get("component_type")),
                 str(row.get("component_group")),
                 bar_text,
                 _fmt_int(row.get("tokens")),
-                _fmt_float(row.get("percent")),
+                f"{row.get('percent', 0):.1f}",
+                _fmt_int(calls),
+                _fmt_float(tokens / calls if calls else 0),
             )
-        console.print(Panel(ct, title="Component Contribution", border_style=COL_MAGENTA))
+        console.print(Panel(ct, title="[bold]Components Contribution[/bold]", border_style=COL_MAGENTA))
 
 
 def print_period_report(label: str, report: dict[str, Any]) -> None:
@@ -347,20 +359,78 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         mt.add_column("", style="bold", justify="left")
         mt.add_column("", justify="left")
         mt.add_column("API", justify="right")
-        mt.add_column("Estimated", justify="right")
+        mt.add_column("Est.", justify="right")
         max_api_cost = max((float(item.get("api_cost", 0)) for item in model_costs), default=1) or 1
         for item in model_costs[:13]:
             api_cost = float(item.get("api_cost", 0))
-            bar_text = _color_bar(api_cost, max_api_cost, COL_GREEN, width=10)
+            bar_text = _color_bar(api_cost, max_api_cost, COL_GREEN, width=6)
             mt.add_row(
                 str(item.get("model")),
                 bar_text,
                 _fmt_float(api_cost),
                 _fmt_float(item.get("estimated_cost")),
             )
-        model_costs_panel = Panel(mt, title="Model Costs", border_style=COL_GREEN)
+        model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN)
     else:
         model_costs_panel = None
+
+    # Build Session Categories panel
+    by_activity = report.get("by_activity")
+    act_panel = None
+    if isinstance(by_activity, list) and by_activity:
+        act = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        act.add_column("", style="bold")
+        act.add_column("", justify="left")
+        act.add_column("Tokens", justify="right")
+        act.add_column("%", justify="right")
+        act.add_column("Calls", justify="right")
+        act.add_column("API", justify="right")
+        act.add_column("Est.", justify="right")
+        cat_rows = sorted(by_activity, key=lambda x: int(x.get("tokens", 0)), reverse=True)[:10]
+        total_cat_tokens = sum(int(row.get("tokens", 0)) for row in cat_rows) or 1
+        max_tokens = max((int(row.get("tokens", 0)) for row in cat_rows), default=1) or 1
+        for row in cat_rows:
+            tokens = int(row.get("tokens", 0))
+            pct = tokens / total_cat_tokens * 100
+            bar_text = _color_bar(tokens, max_tokens, COL_GREEN, width=6)
+            act.add_row(
+                str(row.get("label", row.get("category", "?"))),
+                bar_text,
+                _fmt_int(tokens),
+                f"{pct:.1f}",
+                _fmt_int(row.get("calls", 0)),
+                _fmt_float(row.get("api_cost", 0)),
+                _fmt_float(row.get("estimated_cost", 0)),
+            )
+        act_panel = Panel(act, title="[bold]Session Categories[/bold]", border_style=COL_GREEN)
+
+    # Build Top Sessions panel
+    top_sess_panel = None
+    top_sessions = report.get("top_sessions")
+    if isinstance(top_sessions, list) and top_sessions:
+        ts = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        ts.add_column("", style="bold")
+        ts.add_column("", justify="left")
+        ts.add_column("Tokens", justify="right")
+        ts.add_column("%", justify="right")
+        ts.add_column("API", justify="right")
+        ts.add_column("Est.", justify="right")
+        sess_rows = sorted(top_sessions, key=lambda x: int(x.get("tokens", 0)), reverse=True)[:10]
+        total_sess_tokens = sum(int(row.get("tokens", 0)) for row in sess_rows) or 1
+        max_tokens = max((int(row.get("tokens", 0)) for row in sess_rows), default=1) or 1
+        for row in sess_rows:
+            tokens = int(row.get("tokens", 0))
+            pct = tokens / total_sess_tokens * 100
+            bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=6)
+            ts.add_row(
+                str(row.get("root_dir", "-")),
+                bar_text,
+                _fmt_int(tokens),
+                f"{pct:.1f}",
+                _fmt_float(row.get("api_cost", 0)),
+                _fmt_float(row.get("estimated_cost", 0)),
+            )
+        top_sess_panel = Panel(ts, title="[bold]Top Sessions[/bold]", border_style=COL_ORANGE)
 
     # Build Top Tools panel
     top_tools = report.get("top_tools")
@@ -372,25 +442,29 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         tt.add_column("Tokens", justify="right")
         tt.add_column("%", justify="right")
         tt.add_column("Calls", justify="right")
+        tt.add_column("Tok/Call", justify="right")
         total_tt_tokens = sum(int(item.get("output_tokens", 0)) for item in top_tools) or 1
         max_tokens = max((int(item.get("output_tokens", 0)) for item in top_tools), default=1) or 1
         for item in top_tools[:13]:
             tokens = int(item.get("output_tokens", 0))
+            calls = int(item.get("call_count", 0))
             pct = tokens / total_tt_tokens * 100
-            bar_text = _color_bar(tokens, max_tokens, COL_GOLD, width=10)
-            tt.add_row(str(item["name"]), bar_text, _fmt_int(tokens), f"{pct:.1f}", _fmt_int(item["call_count"]))
-        top_tools_panel = Panel(tt, title="Top Tools", border_style=COL_GOLD)
+            bar_text = _color_bar(tokens, max_tokens, COL_GOLD, width=6)
+            tt.add_row(str(item["name"]), bar_text, _fmt_int(tokens), f"{pct:.1f}", _fmt_int(calls), _fmt_float(tokens / calls if calls else 0))
+        top_tools_panel = Panel(tt, title="[bold]Top Tools[/bold]", border_style=COL_GOLD, expand=False)
 
-    summary_panel = Panel(summary_table, title="Period Summary", border_style=COL_MAGENTA)
-    comp_panel = Panel(comp_table, title="Token Composition", border_style=COL_BLUE)
+    summary_panel = Panel(summary_table, title="[bold]Period Summary[/bold]", border_style=COL_MAGENTA)
+    comp_panel = Panel(comp_table, title="[bold]Token Composition[/bold]", border_style=COL_BLUE)
     left_group = Group(summary_panel, comp_panel)
 
-    # Layout: left column (Summary + Composition) | Model Costs | Top Tools
+    # Layout: left column (Summary + Composition) | Model Costs | Top Sessions | Session Categories
     right_side = []
     if model_costs_panel:
         right_side.append(model_costs_panel)
-    if top_tools_panel:
-        right_side.append(top_tools_panel)
+    if top_sess_panel:
+        right_side.append(top_sess_panel)
+    if act_panel:
+        right_side.append(act_panel)
     if right_side:
         console.print(Columns([left_group] + right_side, equal=False, padding=0))
     else:
@@ -405,23 +479,28 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
 
     if isinstance(component_stats, dict) and component_stats.get("rows"):
         ct = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
-        ct.add_column("Type", style="bold")
-        ct.add_column("Group")
+        ct.add_column("Type")
+        ct.add_column("", style="bold")
         ct.add_column("", justify="left")
         ct.add_column("Tokens", justify="right")
         ct.add_column("%", justify="right")
+        ct.add_column("Calls", justify="right")
+        ct.add_column("Tok/Call", justify="right")
         max_tokens = max((int(row.get("tokens", 0)) for row in component_stats["rows"]), default=1) or 1
         for row in component_stats["rows"]:
             tokens = int(row.get("tokens", 0))
-            bar_text = _color_bar(tokens, max_tokens, COL_MAGENTA, width=10)
+            calls = int(row.get("calls", 0))
+            bar_text = _color_bar(tokens, max_tokens, COL_MAGENTA, width=6)
             ct.add_row(
                 str(row.get("component_type")),
                 str(row.get("component_group")),
                 bar_text,
                 _fmt_int(row.get("tokens")),
-                _fmt_float(row.get("percent")),
+                f"{row.get('percent', 0):.1f}",
+                _fmt_int(calls),
+                _fmt_float(tokens / calls if calls else 0),
             )
-        panels.append(Panel(ct, title="Component Contribution", border_style=COL_MAGENTA))
+        panels.append(Panel(ct, title="[bold]Components Contribution[/bold]", border_style=COL_MAGENTA))
 
     if isinstance(core_stats, dict) and core_stats.get("rows"):
         oc = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
@@ -429,19 +508,24 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         oc.add_column("", justify="left")
         oc.add_column("Tokens", justify="right")
         oc.add_column("%", justify="right")
+        oc.add_column("Calls", justify="right")
+        oc.add_column("Tok/Call", justify="right")
         total_core_tokens = sum(int(row.get("tokens", 0)) for row in core_stats["rows"]) or 1
         max_tokens = max((int(row.get("tokens", 0)) for row in core_stats["rows"]), default=1) or 1
         for row in core_stats["rows"][:15]:
             tokens = int(row.get("tokens", 0))
+            calls = int(row.get("calls", 0))
             pct = tokens / total_core_tokens * 100
-            bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=10)
+            bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=6)
             oc.add_row(
                 str(row.get("component_name")),
                 bar_text,
                 _fmt_int(row.get("tokens")),
                 f"{pct:.1f}",
+                _fmt_int(calls),
+                _fmt_float(tokens / calls if calls else 0),
             )
-        panels.append(Panel(oc, title="OpenCode Contribution", border_style=COL_ORANGE))
+        panels.append(Panel(oc, title="[bold]OpenCode Contribution[/bold]", border_style=COL_ORANGE))
 
     if isinstance(mcp_stats, dict) and mcp_stats.get("rows"):
         mcp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
@@ -455,75 +539,20 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         max_tokens = max((r.get("tokens", 0) for r in mcp_filtered), default=1) or 1
         for row in mcp_filtered[:15]:
             tokens = int(row.get("tokens", 0))
-            bar_text = _color_bar(tokens, max_tokens, COL_CYAN, width=10)
+            bar_text = _color_bar(tokens, max_tokens, COL_CYAN, width=6)
             mcp.add_row(
                 str(row.get("name")),
                 bar_text,
                 _fmt_int(tokens),
-                _fmt_float(row.get("percent")),
+                f"{row.get('percent', 0):.1f}",
                 _fmt_int(row.get("calls")),
                 _fmt_float(row.get("tokens_per_call")),
             )
-        panels.append(Panel(mcp, title="MCP Servers", border_style=COL_CYAN))
+        panels.append(Panel(mcp, title="[bold]MCP Servers[/bold]", border_style=COL_CYAN))
 
     if panels:
         console.print(Columns(panels, equal=False, padding=0))
 
-    # Build Session Categories panel
-    by_activity = report.get("by_activity")
-    act_panel = None
-    if isinstance(by_activity, list) and by_activity:
-        act = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
-        act.add_column("", style="bold")
-        act.add_column("", justify="left")
-        act.add_column("Tokens", justify="right")
-        act.add_column("Calls", justify="right")
-        act.add_column("API", justify="right")
-        act.add_column("Estimated", justify="right")
-        cat_rows = by_activity[:10]
-        max_tokens = max((int(row.get("tokens", 0)) for row in cat_rows), default=1) or 1
-        for row in cat_rows:
-            tokens = int(row.get("tokens", 0))
-            bar_text = _color_bar(tokens, max_tokens, COL_GREEN, width=10)
-            act.add_row(
-                str(row.get("label", row.get("category", "?"))),
-                bar_text,
-                _fmt_int(tokens),
-                _fmt_int(row.get("calls", 0)),
-                _fmt_float(row.get("api_cost", 0)),
-                _fmt_float(row.get("estimated_cost", 0)),
-            )
-        act_panel = Panel(act, title="Session Categories", border_style=COL_GREEN)
-
-    # Build Top Sessions panel
-    top_sess_panel = None
-    top_sessions = report.get("top_sessions")
-    if isinstance(top_sessions, list) and top_sessions:
-        ts = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
-        ts.add_column("", style="bold")
-        ts.add_column("", justify="left")
-        ts.add_column("Tokens", justify="right")
-        ts.add_column("API", justify="right")
-        ts.add_column("Estimated", justify="right")
-        sess_rows = top_sessions[:10]
-        max_tokens = max((int(row.get("tokens", 0)) for row in sess_rows), default=1) or 1
-        for row in sess_rows:
-            tokens = int(row.get("tokens", 0))
-            bar_text = _color_bar(tokens, max_tokens, COL_ORANGE, width=10)
-            ts.add_row(
-                str(row.get("root_dir", "-")),
-                bar_text,
-                _fmt_int(tokens),
-                _fmt_float(row.get("api_cost", 0)),
-                _fmt_float(row.get("estimated_cost", 0)),
-            )
-        top_sess_panel = Panel(ts, title="Top Sessions", border_style=COL_ORANGE)
-
-    # Layout: Session Categories | Top Sessions
-    if act_panel or top_sess_panel:
-        cat_group = []
-        if act_panel:
-            cat_group.append(act_panel)
-        if top_sess_panel:
-            cat_group.append(top_sess_panel)
-        console.print(Columns(cat_group, equal=False, padding=0))
+    # Top Tools at the bottom (not spanning full width)
+    if top_tools_panel:
+        console.print(top_tools_panel)

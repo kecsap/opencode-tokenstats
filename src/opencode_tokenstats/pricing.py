@@ -15,18 +15,23 @@ def load_model_aliases(file_path: str | None = None) -> dict[str, str]:
     Search locations (in order):
     1. Explicit file_path parameter
     2. OPTOKEN_MODEL_ALIAS_FILE environment variable
-    3. Current working directory: models.conf
+    3. Current working directory: models.conf (only if no explicit path or env var set)
     """
     candidates: list[Path] = []
+    explicit_path = False
 
     if file_path:
         candidates.append(Path(file_path))
+        explicit_path = True
 
     env_file = os.environ.get("OPTOKEN_MODEL_ALIAS_FILE", "")
     if env_file:
         candidates.append(Path(env_file))
+        explicit_path = True
 
-    candidates.append(Path.cwd() / "models.conf")
+    # Only check default models.conf if no explicit path or env var set
+    if not explicit_path:
+        candidates.append(Path.cwd() / "models.conf")
 
     aliases: dict[str, str] = {}
     for conf_path in candidates:

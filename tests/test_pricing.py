@@ -62,18 +62,9 @@ def test_canonical_model_keys_match_converter_style() -> None:
 
 def test_load_model_aliases_empty() -> None:
     from opencode_tokenstats.pricing import load_model_aliases
-    # No file exists, should return empty dict
-    import os
-    old_env = os.environ.get("OPENCODE_MODEL_ALIASES_FILE")
-    os.environ["OPENCODE_MODEL_ALIASES_FILE"] = "/nonexistent/path"
-    try:
-        result = load_model_aliases()
-        assert result == {}
-    finally:
-        if old_env is None:
-            os.environ.pop("OPENCODE_MODEL_ALIASES_FILE", None)
-        else:
-            os.environ["OPENCODE_MODEL_ALIASES_FILE"] = old_env
+    # Pass nonexistent file path directly, should return empty dict
+    result = load_model_aliases(file_path="/nonexistent/path")
+    assert result == {}
 
 
 def test_load_model_aliases_from_file(tmp_path) -> None:

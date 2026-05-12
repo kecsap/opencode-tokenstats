@@ -528,8 +528,8 @@ def _build_period_report(
     }
     tool_map: dict[str, dict[str, int]] = defaultdict(lambda: {"output_tokens": 0, "call_count": 0})
     mcp_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
-    component_map: dict[str, float] = defaultdict(float)
-    core_map: dict[str, float] = defaultdict(float)
+    component_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
+    core_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
     aliases = load_model_aliases(options.get("model_alias_file"))
     model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0})
 
@@ -556,9 +556,11 @@ def _build_period_report(
             mcp_map[str(r["name"])]["calls"] += float(r["calls"])
         for r in canonical.component_rows:
             if r["component_group"] == "opencode-core":
-                core_map[r["component_name"]] += float(r["tokens"])
+                core_map[r["component_name"]]["tokens"] += float(r["tokens"])
+                core_map[r["component_name"]]["calls"] += int(r.get("calls", 0))
             else:
-                component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"] += float(r["tokens"])
+                component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"]["tokens"] += float(r["tokens"])
+                component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"]["calls"] += int(r.get("calls", 0))
         model_key = aliases.get(canonical.model, canonical.model)
         model_map[model_key]["api_cost"] += float(canonical.actual_cost_usd)
         model_map[model_key]["estimated_cost"] += float(canonical.estimated_cost_usd)
@@ -643,7 +645,7 @@ def _build_period_report(
         "top_tools": top_tools,
         "mcp_stats": _finalize_mcp_stats(mcp_map),
         "core_stats": _finalize_core_stats(core_map),
-        "component_stats": _finalize_component_stats_canonical(component_map, core_tokens=sum(core_map.values())),
+        "component_stats": _finalize_component_stats_canonical(component_map, core_tokens=sum(d["tokens"] for d in core_map.values())),
         "model_costs": _finalize_model_costs(model_map),
         "by_activity": by_activity,
         "top_sessions": top_sessions,
@@ -939,47 +941,55 @@ def _finalize_component_stats(component_map: dict[str, float]) -> dict[str, obje
     return {"rows": rows, "total_tokens": int(total)}
 
 
-def _finalize_core_stats(core_map: dict[str, float]) -> dict[str, object]:
-    normalized: dict[str, float] = defaultdict(float)
-    for name, tokens in core_map.items():
+def _finalize_core_stats(core_map: dict[str, dict[str, float]]) -> dict[str, object]:
+    normalized: dict[str, dict[str, float]] = {}
+    for name, data in core_map.items():
         target = "general" if name == "invalid" else name
-        normalized[target] += float(tokens)
+        if target not in normalized:
+            normalized[target] = {"tokens": 0.0, "calls": 0.0}
+        normalized[target]["tokens"] += float(data["tokens"])
+        normalized[target]["calls"] += float(data["calls"])
 
     rows: list[dict[str, object]] = []
-    for name, tokens in normalized.items():
-        t = int(tokens)
+    for name, data in normalized.items():
+        t = int(data["tokens"])
+        c = int(data["calls"])
         rows.append(
             {
                 "component_name": name,
                 "tokens": t,
+                "calls": c,
             }
         )
     rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
-    return {"rows": rows, "total_tokens": int(sum(normalized.values()))}
+    return {"rows": rows, "total_tokens": int(sum(d["tokens"] for d in normalized.values()))}
 
 
-def _finalize_component_stats_canonical(component_map: dict[str, float], *, core_tokens: float = 0.0) -> dict[str, object]:
+def _finalize_component_stats_canonical(component_map: dict[str, dict[str, float]], *, core_tokens: float = 0.0) -> dict[str, object]:
     family: dict[str, dict[str, Any]] = {}
     type_sets: dict[str, set[str]] = {}
-    for key, tokens in component_map.items():
+    for key, data in component_map.items():
         parts = key.split("|", 2)
         ctype = parts[0] if len(parts) > 0 else "component"
         cgroup = parts[1] if len(parts) > 1 else "unknown"
         if cgroup not in family:
-            family[cgroup] = {"tokens": 0.0}
+            family[cgroup] = {"tokens": 0.0, "calls": 0.0}
         type_sets.setdefault(cgroup, set()).add(ctype)
-        family[cgroup]["tokens"] += tokens
+        family[cgroup]["tokens"] += float(data["tokens"])
+        family[cgroup]["calls"] += float(data["calls"])
 
     total = sum(v["tokens"] for v in family.values()) + float(core_tokens)
     rows: list[dict[str, object]] = []
     for cgroup, data in family.items():
         t = int(data["tokens"])
+        c = int(data["calls"])
         types = type_sets.get(cgroup, set())
         rows.append(
             {
                 "component_type": "mixed" if len(types) > 1 else (types.pop() if types else "unknown"),
                 "component_group": cgroup,
                 "tokens": t,
+                "calls": c,
                 "percent": round((data["tokens"] / total * 100.0), 2) if total > 0 else 0.0,
             }
         )
@@ -991,6 +1001,7 @@ def _finalize_component_stats_canonical(component_map: dict[str, float], *, core
                 "component_type": "core",
                 "component_group": "opencode-core",
                 "tokens": t,
+                "calls": 0,
                 "percent": round((core_tokens / total * 100.0), 2) if total > 0 else 0.0,
             }
         )
