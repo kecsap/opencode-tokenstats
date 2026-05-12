@@ -645,7 +645,11 @@ def _build_period_report(
         "top_tools": top_tools,
         "mcp_stats": _finalize_mcp_stats(mcp_map),
         "core_stats": _finalize_core_stats(core_map),
-        "component_stats": _finalize_component_stats_canonical(component_map, core_tokens=sum(d["tokens"] for d in core_map.values())),
+        "component_stats": _finalize_component_stats_canonical(
+            component_map,
+            core_tokens=sum(d["tokens"] for d in core_map.values()),
+            core_calls=sum(d["calls"] for d in core_map.values()),
+        ),
         "model_costs": _finalize_model_costs(model_map),
         "by_activity": by_activity,
         "top_sessions": top_sessions,
@@ -965,7 +969,7 @@ def _finalize_core_stats(core_map: dict[str, dict[str, float]]) -> dict[str, obj
     return {"rows": rows, "total_tokens": int(sum(d["tokens"] for d in normalized.values()))}
 
 
-def _finalize_component_stats_canonical(component_map: dict[str, dict[str, float]], *, core_tokens: float = 0.0) -> dict[str, object]:
+def _finalize_component_stats_canonical(component_map: dict[str, dict[str, float]], *, core_tokens: float = 0.0, core_calls: float = 0.0) -> dict[str, object]:
     family: dict[str, dict[str, Any]] = {}
     type_sets: dict[str, set[str]] = {}
     for key, data in component_map.items():
@@ -996,12 +1000,13 @@ def _finalize_component_stats_canonical(component_map: dict[str, dict[str, float
     rows.sort(key=lambda x: int(x["tokens"]), reverse=True)
     if core_tokens > 0:
         t = int(core_tokens)
+        c = int(core_calls)
         rows.append(
             {
                 "component_type": "core",
                 "component_group": "opencode-core",
                 "tokens": t,
-                "calls": 0,
+                "calls": c,
                 "percent": round((core_tokens / total * 100.0), 2) if total > 0 else 0.0,
             }
         )
