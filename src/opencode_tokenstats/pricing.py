@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import fnmatch
 
 
 def load_model_aliases(file_path: str | None = None) -> dict[str, str]:
@@ -11,6 +12,7 @@ def load_model_aliases(file_path: str | None = None) -> dict[str, str]:
 
     Format: one alias per line, e.g. 'alias_name = openai/gpt-5.4'
     Or grouped: 'alias_name = azure/gpt-5.4 openai/gpt-5.4'
+    Wildcards: 'alias_name = myprovider/qwen*' matches myprovider/qwen3.6-27b, etc.
 
     Search locations (in order):
     1. Explicit file_path parameter
@@ -34,6 +36,7 @@ def load_model_aliases(file_path: str | None = None) -> dict[str, str]:
         candidates.append(Path.cwd() / "models.conf")
 
     aliases: dict[str, str] = {}
+    wildcard_aliases: list[tuple[str, str]] = []  # List of (pattern, alias) for wildcard matching
     for conf_path in candidates:
         if conf_path.exists():
             try:
@@ -44,14 +47,44 @@ def load_model_aliases(file_path: str | None = None) -> dict[str, str]:
                     if "=" in line:
                         key, val = line.split("=", 1)
                         key = key.strip()
+                        # Strip @local prefix from alias name
+                        alias_name = key
+                        if alias_name.startswith("@local "):
+                            alias_name = alias_name[len("@local "):]
                         for raw_id in val.split():
                             raw_id = raw_id.strip()
                             if raw_id:
-                                aliases[raw_id] = key
+                                if "*" in raw_id:
+                                    wildcard_aliases.append((raw_id, alias_name))
+                                else:
+                                    aliases[raw_id] = alias_name
             except Exception:
                 pass
             break
+    # Prepend wildcard patterns with a marker so they can be distinguished
+    for pattern, alias in wildcard_aliases:
+        aliases[f"*{pattern}"] = alias
     return aliases
+
+
+def resolve_alias(model_id: str, aliases: dict[str, str]) -> str:
+    """Resolve a model ID to its alias, supporting wildcard patterns.
+
+    Exact matches take precedence over wildcard matches.
+    Wildcard patterns use * as a glob-like matcher (matches any suffix).
+    """
+    # Check exact match first
+    if model_id in aliases:
+        return aliases[model_id]
+
+    # Check wildcard matches (glob semantics via fnmatch)
+    for key, alias in aliases.items():
+        if key.startswith("*"):
+            pattern = key[1:]  # Remove the * marker
+            if fnmatch.fnmatch(model_id, pattern):
+                return alias
+
+    return model_id
 
 
 def load_local_model_patterns(file_path: str | None = None) -> list[str]:

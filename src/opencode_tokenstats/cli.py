@@ -31,7 +31,7 @@ if __package__ in {None, ""}:
     from opencode_tokenstats.report_schema import build_report_schema, report_to_markdown
     from opencode_tokenstats.session_service import SessionService
     from opencode_tokenstats.tokenization import TokenizerRegistry
-    from opencode_tokenstats.pricing import load_model_aliases
+    from opencode_tokenstats.pricing import load_model_aliases, resolve_alias
 else:
     from .activity_classifier import classify_session, CATEGORY_LABELS, extract_root_dir
     from .client import ApiClientError, OpencodeApiClient
@@ -42,7 +42,7 @@ else:
     from .report_schema import build_report_schema, report_to_markdown
     from .session_service import SessionService
     from .tokenization import TokenizerRegistry
-    from .pricing import load_model_aliases
+    from .pricing import load_model_aliases, resolve_alias
 
 
 class OrderedCommandsGroup(click.Group):
@@ -586,7 +586,7 @@ def _build_period_report(
             else:
                 component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"]["tokens"] += float(r["tokens"])
                 component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"]["calls"] += int(r.get("calls", 0))
-        model_key = aliases.get(canonical.model, canonical.model)
+        model_key = resolve_alias(canonical.model, aliases)
         model_map[model_key]["api_cost"] += float(canonical.actual_cost_usd)
         model_map[model_key]["estimated_cost"] += float(canonical.estimated_cost_usd)
 
@@ -1071,7 +1071,7 @@ def _accumulate_model_costs(model_map: dict[str, dict[str, float]], messages: li
         role = msg.get("role")
         if role != "assistant":
             continue
-        model_id = aliases.get(_extract_model_id_from_message(msg), _extract_model_id_from_message(msg))
+        model_id = resolve_alias(_extract_model_id_from_message(msg), aliases)
         telemetry = summarize_telemetry(collect_telemetry_calls([msg]))
         model_map[model_id]["api_cost"] += float(telemetry.total_cost)
         # Estimated cost would need pricing lookup; for now use API cost as proxy for estimated
@@ -1092,7 +1092,10 @@ def _finalize_model_costs(model_map: dict[str, dict[str, float]]) -> list[dict[s
                 "cost": round(primary_cost, 6),
             }
         )
-    rows.sort(key=lambda x: float(x["cost"]), reverse=True)
+    rows.sort(
+        key=lambda x: (float(x["api_cost"]), float(x["estimated_cost"])),
+        reverse=True,
+    )
     return rows[:10]
 
 

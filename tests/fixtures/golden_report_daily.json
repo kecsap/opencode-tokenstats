@@ -7,7 +7,7 @@
     "sessions": 1,
     "api_calls": 1,
     "tokens": 184,
-    "api_cost": 0.012
+    "api_cost": 0.000885
   },
   "tokens": {
     "input": 120,
@@ -42,16 +42,16 @@
       "sessions": 1,
       "api_calls": 1,
       "tokens": 184,
-      "api_cost": 0.012
+      "api_cost": 0.000885
     }
   ],
   "projects": [],
   "models": [
     {
       "model": "openai/gpt-5.3-codex",
-      "api_cost": 0.012,
-      "estimated_cost": 0.0,
-      "cost": 0.012
+      "api_cost": 0.0,
+      "estimated_cost": 0.000885,
+      "cost": 0.000885
     }
   ],
   "by_activity": [
@@ -60,16 +60,16 @@
       "label": "General",
       "tokens": 184,
       "calls": 1,
-      "api_cost": 0.012,
-      "estimated_cost": 0.0
+      "api_cost": 0.0,
+      "estimated_cost": 0.000885
     }
   ],
   "top_sessions": [
     {
       "root_dir": "ses_fixture_1",
       "tokens": 184,
-      "api_cost": 0.012,
-      "estimated_cost": 0.0
+      "api_cost": 0.0,
+      "estimated_cost": 0.000885
     }
   ]
 }

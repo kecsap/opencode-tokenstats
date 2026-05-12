@@ -114,3 +114,82 @@ def test_load_local_model_patterns(tmp_path) -> None:
             os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)
         else:
             os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = old_env
+
+
+def test_load_model_aliases_wildcard(tmp_path) -> None:
+    from opencode_tokenstats.pricing import load_model_aliases
+    import os
+
+    conf = tmp_path / "models.conf"
+    conf.write_text(
+        "@local local/qwen = myollama/qwen*\n"
+        "@local local/llama = myllama/*\n"
+        "exact-alias = openai/gpt-4o\n"
+    )
+    old_env = os.environ.get("OPTOKEN_MODEL_ALIAS_FILE")
+    os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = str(conf)
+    try:
+        result = load_model_aliases()
+        # Wildcard patterns stored with * marker
+        assert "*myollama/qwen*" in result
+        assert "*myllama/*" in result
+        # Exact matches stored normally
+        assert result["openai/gpt-4o"] == "exact-alias"
+    finally:
+        if old_env is None:
+            os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)
+        else:
+            os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = old_env
+
+
+def test_resolve_alias_exact_match() -> None:
+    from opencode_tokenstats.pricing import resolve_alias
+
+    aliases = {
+        "openai/gpt-4o": "gpt-unified",
+        "anthropic/claude": "claude-pro",
+    }
+
+    assert resolve_alias("openai/gpt-4o", aliases) == "gpt-unified"
+    assert resolve_alias("anthropic/claude", aliases) == "claude-pro"
+    assert resolve_alias("unknown/model", aliases) == "unknown/model"
+
+
+def test_resolve_alias_wildcard_suffix() -> None:
+    from opencode_tokenstats.pricing import resolve_alias
+
+    aliases = {
+        "*myollama/qwen*": "local/qwen",
+        "*myllama/*": "local/llama",
+    }
+
+    assert resolve_alias("myollama/qwen3.6-27b", aliases) == "local/qwen"
+    assert resolve_alias("myllama/llama3.1", aliases) == "local/llama"
+    # No match
+    assert resolve_alias("openai/gpt-4o", aliases) == "openai/gpt-4o"
+
+
+def test_resolve_alias_exact_precedes_wildcard() -> None:
+    from opencode_tokenstats.pricing import resolve_alias
+
+    aliases = {
+        "myollama/qwen3.6-27b": "exact-alias",
+        "*myollama/qwen*": "local/qwen",
+    }
+
+    # Exact match takes precedence
+    assert resolve_alias("myollama/qwen3.6-27b", aliases) == "exact-alias"
+    # Wildcard matches other variants
+    assert resolve_alias("myollama/qwen3.5-9b", aliases) == "local/qwen"
+
+
+def test_resolve_alias_wildcard_provider_and_model_prefix() -> None:
+    from opencode_tokenstats.pricing import resolve_alias
+
+    aliases = {
+        "*llamacpp_qwen36*/qwen3.6-27b*": "local/qwen3.6-27b",
+    }
+
+    assert resolve_alias("llamacpp_qwen36_gpu/qwen3.6-27b1", aliases) == "local/qwen3.6-27b"
+    assert resolve_alias("llamacpp_qwen36/qwen3.6-27b", aliases) == "local/qwen3.6-27b"
+    assert resolve_alias("myllamacpp/qwen3.6-27b", aliases) == "myllamacpp/qwen3.6-27b"
