@@ -232,7 +232,7 @@ def _resolve_component_info(
     return ("tool", _component_group(tool_name))
 
 
-_LOCAL_TOOL_RE = re.compile(r"^(read|bash|glob|todowrite|task|tokenscope|apply_patch|skill)$")
+_LOCAL_TOOL_RE = re.compile(r"^(read|bash|glob|todowrite|task|tokenscope|apply_patch|skill|quota_status)$")
 _CORE_OPENCODE_TOOLS = {
     "read",
     "bash",
