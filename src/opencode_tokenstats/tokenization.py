@@ -115,6 +115,19 @@ class TokenizerRegistry:
 
         return ResolvedModel(provider, model, TokenizerSpec("approx", None))
 
+    def is_tokenizer_available(self, provider_id: str | None, model_id: str | None) -> bool:
+        """Check if a real tokenizer is available for the model (not approx fallback)."""
+        resolved = self.resolve_model(provider_id, model_id)
+        if resolved.tokenizer.kind == "approx":
+            return False
+        if resolved.tokenizer.kind == "tiktoken":
+            # tiktoken is always available (bundled package)
+            return True
+        if resolved.tokenizer.kind == "huggingface":
+            # Check if the local tokenizer file exists
+            return self._resolve_local_hf_tokenizer_path(resolved.tokenizer.value or "") is not None
+        return False
+
     def count(self, text: str, spec: TokenizerSpec) -> TokenCountResult:
         if not text.strip():
             return TokenCountResult(tokens=0, approximate=False)

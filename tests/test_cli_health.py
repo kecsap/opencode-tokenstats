@@ -103,6 +103,9 @@ class DummyRegistry:
     def warmup_parallel(self, _pairs, sample_text="warmup", max_workers=1):
         return self.warmup(_pairs, sample_text=sample_text)
 
+    def is_tokenizer_available(self, _provider_id: str, _model_id: str) -> bool:
+        return True
+
 
 def test_health_ok(monkeypatch) -> None:
     monkeypatch.setattr(cli, "OpencodeApiClient", DummyClient)

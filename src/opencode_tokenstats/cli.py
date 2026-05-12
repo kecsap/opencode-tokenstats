@@ -235,13 +235,30 @@ def tokenizer_warmup(pairs: tuple[str, ...], sample_text: str) -> None:
             ("anthropic", "claude-sonnet-4"),
         ]
 
-    max_workers = min(len(parsed), max(os.cpu_count() or 1, 1))
-    results = registry.warmup_parallel(parsed, sample_text=sample_text, max_workers=max_workers)
+    # Skip models with unavailable tokenizers (approx fallback)
+    available_pairs = [
+        (p, m) for p, m in parsed
+        if registry.is_tokenizer_available(p, m)
+    ]
+    skipped = [
+        (p, m) for p, m in parsed
+        if not registry.is_tokenizer_available(p, m)
+    ]
+    if skipped:
+        for p, m in skipped:
+            resolved = registry.resolve_model(p, m)
+            click.echo(f"Skipping {p}:{m} (tokenizer unavailable, would use {resolved.tokenizer.kind} fallback)")
+
+    if not available_pairs:
+        click.echo("No models with available tokenizers. Nothing to warmup.")
+        return
+
+    max_workers = min(len(available_pairs), max(os.cpu_count() or 1, 1))
+    results = registry.warmup_parallel(available_pairs, sample_text=sample_text, max_workers=max_workers)
     warmed = sum(1 for r in results if r.status == "warmed")
-    approx = sum(1 for r in results if r.status == "approximate")
     failed = sum(1 for r in results if r.status == "failed")
 
-    click.echo(f"Tokenizer warmup: warmed={warmed} approximate={approx} failed={failed}")
+    click.echo(f"Tokenizer warmup: warmed={warmed} skipped={len(skipped)} failed={failed}")
     for r in results:
         click.echo(
             f"- {r.provider_id}:{r.model_id} kind={r.tokenizer_kind} value={r.tokenizer_value} status={r.status}"
@@ -253,15 +270,23 @@ def tokenizer_warmup(pairs: tuple[str, ...], sample_text: str) -> None:
 def _run_default_warmup_silent() -> None:
     try:
         registry = TokenizerRegistry()
-        pairs = [
+        all_pairs = [
             ("local", "qwen3.6-27b"),
             ("openai", "gpt-5.3-codex"),
             ("anthropic", "claude-sonnet-4"),
         ]
+        # Only warmup models with available tokenizers (skip approx fallback)
+        available_pairs = [
+            (p, m) for p, m in all_pairs
+            if registry.is_tokenizer_available(p, m)
+        ]
+        if not available_pairs:
+            # No tokenizers available; warmup would be a no-op.
+            return
         with _SessionProgress(desc="Warming tokenizer cache") as prog:
-            results = registry.warmup_parallel(pairs, sample_text="warmup")
+            results = registry.warmup_parallel(available_pairs, sample_text="warmup")
             for idx, _ in enumerate(results, start=1):
-                prog.update(idx, len(pairs))
+                prog.update(idx, len(available_pairs))
     except Exception:
         # Best-effort optimization only; never block CLI commands.
         return
