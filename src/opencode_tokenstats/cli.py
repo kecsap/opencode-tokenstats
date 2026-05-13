@@ -325,6 +325,7 @@ def session(ctx: click.Context, session_id: str | None) -> None:
     model_costs = [
         {
             "model": canonical.model,
+            "tokens": canonical.session_total_tokens,
             "api_cost": round(canonical.actual_cost_usd, 6),
             "estimated_cost": round(canonical.estimated_cost_usd, 6),
             "cost": round(canonical.actual_cost_usd if canonical.actual_cost_usd > 0 else canonical.estimated_cost_usd, 6),
@@ -597,7 +598,7 @@ def _build_period_report(
     component_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
     core_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
     aliases = load_model_aliases(options.get("model_alias_file"))
-    model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0})
+    model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0})
 
     # Activity aggregation maps
     activity_map: dict[str, dict[str, object]] = {}
@@ -626,6 +627,7 @@ def _build_period_report(
         model_key = resolve_alias(canonical.model, aliases)
         model_map[model_key]["api_cost"] += float(canonical.actual_cost_usd)
         model_map[model_key]["estimated_cost"] += float(canonical.estimated_cost_usd)
+        model_map[model_key]["tokens"] += canonical.session_total_tokens
 
         # Classify session and aggregate by activity
         category = classify_session(canonical)
@@ -1121,9 +1123,11 @@ def _finalize_model_costs(model_map: dict[str, dict[str, float]]) -> list[dict[s
         api_cost = costs.get("api_cost", 0.0)
         estimated_cost = costs.get("estimated_cost", 0.0)
         primary_cost = api_cost if api_cost > 0 else estimated_cost
+        tokens = int(costs.get("tokens", 0))
         rows.append(
             {
                 "model": model,
+                "tokens": tokens,
                 "api_cost": round(api_cost, 6),
                 "estimated_cost": round(estimated_cost, 6),
                 "cost": round(primary_cost, 6),

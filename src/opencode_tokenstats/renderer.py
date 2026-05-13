@@ -219,6 +219,7 @@ def print_session_report(
         mt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
         mt.add_column("", style="bold", justify="left")
         mt.add_column("", justify="left")
+        mt.add_column("Tokens", justify="right")
         mt.add_column("API", justify="right")
         mt.add_column("Est.", justify="right")
         max_cost = max((float(item.get("api_cost", 0)) or float(item.get("estimated_cost", 0)) for item in model_costs), default=1) or 1
@@ -229,6 +230,7 @@ def print_session_report(
             mt.add_row(
                 str(item.get("model")),
                 bar_text,
+                _fmt_int(item.get("tokens", 0)),
                 _fmt_float(api_cost),
                 _fmt_float(item.get("estimated_cost")),
             )
@@ -359,6 +361,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         mt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
         mt.add_column("", style="bold", justify="left")
         mt.add_column("", justify="left")
+        mt.add_column("Tokens", justify="right")
         mt.add_column("API", justify="right")
         mt.add_column("Est.", justify="right")
         max_cost = max((float(item.get("api_cost", 0)) or float(item.get("estimated_cost", 0)) for item in model_costs), default=1) or 1
@@ -369,6 +372,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
             mt.add_row(
                 str(item.get("model")),
                 bar_text,
+                _fmt_int(item.get("tokens", 0)),
                 _fmt_float(api_cost),
                 _fmt_float(item.get("estimated_cost")),
             )

@@ -56,9 +56,10 @@ def build_report_schema(
     for m in session_metrics:
         model_key = aliases.get(m.model, m.model)
         if model_key not in models:
-            models[model_key] = {"api_cost": 0.0, "estimated_cost": 0.0}
+            models[model_key] = {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0}
         models[model_key]["api_cost"] = round(models[model_key]["api_cost"] + m.actual_cost_usd, 6)
         models[model_key]["estimated_cost"] = round(models[model_key]["estimated_cost"] + m.estimated_cost_usd, 6)
+        models[model_key]["tokens"] += m.session_total_tokens
         for row in m.tool_rows:
             name = str(row["tool"])
             if name not in tools:
@@ -87,9 +88,11 @@ def build_report_schema(
         api_cost = costs["api_cost"]
         estimated_cost = costs["estimated_cost"]
         primary_cost = api_cost if api_cost > 0 else estimated_cost
+        tokens = int(costs["tokens"])
         model_rows.append(
             {
                 "model": k,
+                "tokens": tokens,
                 "api_cost": round(api_cost, 6),
                 "estimated_cost": round(estimated_cost, 6),
                 "cost": round(primary_cost, 6),

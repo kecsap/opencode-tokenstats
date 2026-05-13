@@ -49,6 +49,7 @@
   "models": [
     {
       "model": "openai/gpt-5.3-codex",
+      "tokens": 184,
       "api_cost": 0.0,
       "estimated_cost": 0.000885,
       "cost": 0.000885

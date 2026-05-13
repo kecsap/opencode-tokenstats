@@ -89,6 +89,8 @@ def test_model_costs_separate_api_and_estimated() -> None:
     assert model["estimated_cost"] == 0.02
     # Primary cost should be API cost when available
     assert model["cost"] == 0.01
+    # Tokens should be present
+    assert model["tokens"] == 19
 
 
 def test_model_costs_uses_estimated_when_no_api() -> None:
