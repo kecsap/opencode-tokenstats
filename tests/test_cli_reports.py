@@ -156,3 +156,109 @@ def test_json_command_includes_by_activity_and_top_sessions(monkeypatch) -> None
     assert isinstance(payload["by_activity"], list)
     # top_sessions is a list
     assert isinstance(payload["top_sessions"], list)
+
+
+def _sessions_with_dirs():
+    """Return sessions with directory fields for session filter testing."""
+    from datetime import datetime, UTC
+    now = datetime.now(UTC)
+    base = int(now.timestamp() * 1000)
+    return [
+        {"id": "s1", "time_created": base - 3600000, "directory": "/home/user/project-alpha"},
+        {"id": "s2", "time_created": base - 7200000, "directory": "/home/user/project-beta"},
+        {"id": "s3", "time_created": base - 10800000, "directory": "/home/user/project-alpha"},
+    ]
+
+
+def _messages_with_cost(_sid: str):
+    """Return messages with cost info for session filter testing."""
+    return [
+        {
+            "role": "assistant",
+            "info": {
+                "tokens": {
+                    "input": 10,
+                    "output": 5,
+                    "reasoning": 1,
+                    "cache": {"read": 2, "write": 3},
+                },
+                "cost": 0.01,
+            },
+        }
+    ]
+
+
+def test_session_filter_single_match(monkeypatch) -> None:
+    """Session filter with single value matches only matching sessions."""
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions_with_dirs())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages_with_cost(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["-sf", "project-alpha", "json", "--period", "daily"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    # Only sessions from project-alpha should be included (s1 and s3)
+    assert payload["overview"]["sessions"] == 2
+    # top_sessions lists individual sessions (not aggregated by root_dir in json schema)
+    assert len(payload["top_sessions"]) == 2
+    assert all(s["root_dir"] == "project-alpha" for s in payload["top_sessions"])
+
+
+def test_session_filter_multiple_values(monkeypatch) -> None:
+    """Session filter with comma-separated values matches multiple projects."""
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions_with_dirs())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages_with_cost(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["-sf", "project-alpha,project-beta", "json", "--period", "daily"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    # All sessions should be included
+    assert payload["overview"]["sessions"] == 3
+    assert len(payload["top_sessions"]) == 3
+
+
+def test_session_filter_no_match(monkeypatch) -> None:
+    """Session filter with no matching sessions returns empty report."""
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions_with_dirs())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages_with_cost(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["-sf", "nonexistent", "json", "--period", "daily"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["overview"]["sessions"] == 0
+    assert len(payload["top_sessions"]) == 0
+
+
+def test_session_filter_short_flag(monkeypatch) -> None:
+    """Session filter with short flag -sf works."""
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions_with_dirs())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages_with_cost(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["-sf", "project-beta", "json", "--period", "daily"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["overview"]["sessions"] == 1
+    assert len(payload["top_sessions"]) == 1
+    assert payload["top_sessions"][0]["root_dir"] == "project-beta"
+
+
+def test_session_filter_does_not_affect_session_command(monkeypatch) -> None:
+    """Session filter should not affect the session command (single session lookup)."""
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions_with_dirs())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages_with_cost(_sid))
+    runner = CliRunner()
+    # Even with filter for project-alpha, session s2 (project-beta) should still be accessible
+    result = runner.invoke(cli.main, ["-sf", "project-alpha", "session", "--session-id", "s2"])
+    assert result.exit_code == 0
+    assert "s2" in result.output
+
+
+def test_session_filter_in_period_report(monkeypatch) -> None:
+    """Session filter applies to period report (daily command)."""
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions_with_dirs())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages_with_cost(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["-sf", "project-alpha", "daily"])
+    assert result.exit_code == 0
+    assert "Period Summary" in result.output
+    # Should only show 2 sessions (s1 and s3 from project-alpha)
+    assert "2" in result.output

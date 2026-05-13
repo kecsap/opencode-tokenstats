@@ -26,6 +26,7 @@ def build_report_schema(
     end: datetime,
     session_metrics: list[CanonicalMetrics],
     model_alias_file: str | None = None,
+    session_dirs: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     total_sessions = len(session_metrics)
     total_api_calls = sum(m.api_calls for m in session_metrics)
@@ -128,9 +129,12 @@ def build_report_schema(
         activity_map[category]["calls"] += m.api_calls
         activity_map[category]["api_cost"] += m.actual_cost_usd
         activity_map[category]["estimated_cost"] += m.estimated_cost_usd
+        raw_dir = (session_dirs or {}).get(m.session_id, "") if session_dirs else ""
+        from .activity_classifier import extract_root_dir
+        root_dir = extract_root_dir(raw_dir) if raw_dir else (m.session_id or "-")
         session_rows.append(
             {
-                "root_dir": m.session_id or "-",
+                "root_dir": root_dir,
                 "tokens": m.session_total_tokens,
                 "api_cost": round(m.actual_cost_usd, 6),
                 "estimated_cost": round(m.estimated_cost_usd, 6),

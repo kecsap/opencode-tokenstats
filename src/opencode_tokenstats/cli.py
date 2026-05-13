@@ -83,6 +83,7 @@ class OrderedCommandsGroup(click.Group):
 @click.option("--db-path", default=None)
 @click.option("--no-warmup", is_flag=True, help="Disable automatic tokenizer warmup")
 @click.option("--model-alias-file", default=None, help="Path to models.conf alias file")
+@click.option("-sf", "--session-filter", default=None, help="Comma-separated list of project root dir names to filter sessions by")
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -95,8 +96,13 @@ def main(
     db_path: str | None,
     no_warmup: bool,
     model_alias_file: str | None,
+    session_filter: str | None,
 ) -> None:
     """OpenCode TokenStats CLI."""
+    session_filter_set: set[str] | None = None
+    if session_filter:
+        session_filter_set = {v.strip() for v in session_filter.split(",") if v.strip()}
+
     ctx.obj = {
         "base_url": base_url,
         "username": username,
@@ -107,6 +113,7 @@ def main(
         "db_path": db_path,
         "model_alias_file": model_alias_file,
         "no_warmup": no_warmup,
+        "session_filter": session_filter_set,
     }
 
     if not no_warmup and ctx.invoked_subcommand != "tokenizer-warmup":
@@ -415,6 +422,23 @@ def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
         session_metrics = _collect_period_session_metrics(
             ctx.obj, start, end, progress_callback=prog.update
         )
+
+    # Build directory lookup for root_dir extraction and session filtering
+    sessions = _list_sessions(ctx.obj)
+    session_dirs_map: dict[str, str] = {
+        str(sess.get("id", "")): str(sess.get("directory", "")) for sess in sessions
+    }
+
+    # Apply session filter for JSON output
+    session_filter = ctx.obj.get("session_filter")
+    if session_filter:
+        filtered_ids: set[str] = set()
+        for sid, raw_dir in session_dirs_map.items():
+            rd = extract_root_dir(raw_dir)
+            if rd in session_filter:
+                filtered_ids.add(sid)
+        session_metrics = [c for c in session_metrics if c.session_id in filtered_ids]
+
     payload = build_report_schema(
         period=period,
         mode=str(ctx.obj["mode"]),
@@ -422,6 +446,7 @@ def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
         end=end,
         session_metrics=session_metrics,
         model_alias_file=ctx.obj.get("model_alias_file"),
+        session_dirs=session_dirs_map,
     )
     if output_format == "md":
         click.echo(report_to_markdown(payload))
@@ -539,6 +564,22 @@ def _build_period_report(
         options, start, end, progress_callback=progress_callback
     )
     sessions = _list_sessions(options)
+
+    # Build directory lookup for root_dir extraction (from session.directory)
+    session_dirs: dict[str, str] = {
+        str(sess.get("id", "")): str(sess.get("directory", "")) for sess in sessions
+    }
+
+    # Apply session filter: keep only sessions whose root_dir matches the filter
+    session_filter = options.get("session_filter")
+    if session_filter:
+        filtered_ids: set[str] = set()
+        for sid, raw_dir in session_dirs.items():
+            rd = extract_root_dir(raw_dir)
+            if rd in session_filter:
+                filtered_ids.add(sid)
+        session_metrics = [c for c in session_metrics if c.session_id in filtered_ids]
+
     total_calls = 0
     total_tokens = 0
     total_cost = 0.0
@@ -558,10 +599,6 @@ def _build_period_report(
     aliases = load_model_aliases(options.get("model_alias_file"))
     model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0})
 
-    # Build directory lookup for root_dir extraction (from session.directory)
-    session_dirs: dict[str, str] = {
-        str(sess.get("id", "")): str(sess.get("directory", "")) for sess in sessions
-    }
     # Activity aggregation maps
     activity_map: dict[str, dict[str, object]] = {}
     session_rows: list[dict[str, object]] = []
