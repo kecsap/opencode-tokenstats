@@ -221,10 +221,11 @@ def print_session_report(
         mt.add_column("", justify="left")
         mt.add_column("API", justify="right")
         mt.add_column("Est.", justify="right")
-        max_api_cost = max((float(item.get("api_cost", 0)) for item in model_costs), default=1) or 1
+        max_cost = max((float(item.get("api_cost", 0)) or float(item.get("estimated_cost", 0)) for item in model_costs), default=1) or 1
         for item in model_costs[:13]:
             api_cost = float(item.get("api_cost", 0))
-            bar_text = _color_bar(api_cost, max_api_cost, COL_GREEN, width=6)
+            primary_cost = api_cost or float(item.get("estimated_cost", 0))
+            bar_text = _color_bar(primary_cost, max_cost, COL_GREEN, width=6)
             mt.add_row(
                 str(item.get("model")),
                 bar_text,
@@ -360,10 +361,11 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         mt.add_column("", justify="left")
         mt.add_column("API", justify="right")
         mt.add_column("Est.", justify="right")
-        max_api_cost = max((float(item.get("api_cost", 0)) for item in model_costs), default=1) or 1
+        max_cost = max((float(item.get("api_cost", 0)) or float(item.get("estimated_cost", 0)) for item in model_costs), default=1) or 1
         for item in model_costs[:13]:
             api_cost = float(item.get("api_cost", 0))
-            bar_text = _color_bar(api_cost, max_api_cost, COL_GREEN, width=6)
+            primary_cost = api_cost or float(item.get("estimated_cost", 0))
+            bar_text = _color_bar(primary_cost, max_cost, COL_GREEN, width=6)
             mt.add_row(
                 str(item.get("model")),
                 bar_text,

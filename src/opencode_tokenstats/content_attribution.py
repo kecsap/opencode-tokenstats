@@ -234,6 +234,11 @@ def _collect_tool_parts(
         tool_output_tokens[tool_name] = tool_output_tokens.get(tool_name, 0) + counter.count(text)
 
 
+def _sanitize_skill_name(raw: str) -> str:
+    """Strip XML-like artifacts from skill names (cut at '<')."""
+    return raw.split("<", 1)[0].strip()
+
+
 def _resolve_skill_name(part: dict[str, Any]) -> str:
     state = part.get("state")
     if isinstance(state, dict):
@@ -241,13 +246,19 @@ def _resolve_skill_name(part: dict[str, Any]) -> str:
         if isinstance(input_data, dict):
             skill_name = input_data.get("name")
             if isinstance(skill_name, str) and skill_name:
-                return skill_name
+                cleaned = _sanitize_skill_name(skill_name)
+                if cleaned:
+                    return cleaned
             skill_name = input_data.get("skill")
             if isinstance(skill_name, str) and skill_name:
-                return skill_name
+                cleaned = _sanitize_skill_name(skill_name)
+                if cleaned:
+                    return cleaned
             skill_name = input_data.get("skill_name")
             if isinstance(skill_name, str) and skill_name:
-                return skill_name
+                cleaned = _sanitize_skill_name(skill_name)
+                if cleaned:
+                    return cleaned
     return "skill"
 
 
