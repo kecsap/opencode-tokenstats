@@ -33,24 +33,15 @@
       },
       "tools": {
         "disabledTools": ["add_code_to_graph", "add_package_to_graph", "list_indexed_repositories", "delete_repository", "get_repository_stats", "load_bundle", "search_registry_bundles",
-          "watch_directory", "list_watched_paths", "unwatch_directory", "check_job_status", "list_jobs", "visualize_graph_query", "find_most_complex_functions", "switch_context"],
+          "watch_directory", "list_watched_paths", "unwatch_directory", "check_job_status", "list_jobs", "visualize_graph_query", "find_most_complex_functions", "switch_context",
+          "find_java_spring_beans", "find_java_spring_endpoints", "generate_report", "find_datasource_nodes", "find_code"],
         "alwaysAllow": [
-          "add_code_to_graph",
-          "add_package_to_graph",
-          "check_job_status",
-          "list_jobs",
-          "find_code",
           "analyze_code_relationships",
-          "watch_directory",
-          "find_dead_code",
-          "execute_cypher_query",
           "calculate_cyclomatic_complexity",
-          "find_most_complex_functions",
-          "list_indexed_repositories",
-          "delete_repository",
-          "list_watched_paths",
-          "unwatch_directory",
-          "visualize_graph_query"
+          "discover_codegraph_contexts",
+          "execute_cypher_query",
+          "find_dead_code",
+          "find_most_complex_functions"
         ],
         "disabled": false
       },

@@ -2,15 +2,15 @@
   "extra_ignore_patterns": ["node_modules/", ".git/", "__pycache__/", ".codegraph/", ".jcodemunch-index/", ".opencode/", ".playwright-mcp/", ".ruff_cache/"],
   "tool_tier_bundles": {
     "core": [
-      "index_folder",
       "list_repos", "resolve_repo",
       "get_repo_outline", "get_file_tree", "get_file_outline",
-      "search_symbols", "get_symbol_source", "get_file_content",
-      "search_text", "get_context_bundle",
+      "search_symbols", "get_symbol_source",
+      "get_context_bundle",
       "find_importers", "find_references",
       "get_call_hierarchy", "get_blast_radius"
     ]
   },
+  "allow_disabling_tier_controls": true,
   "tool_profile": "core",
   "compact_schemas": true,
   "disabled_tools": [
@@ -35,6 +35,7 @@
     "get_dependency_cycles",
     "get_dependency_graph",
     "get_extraction_candidates",
+    "get_file_content",
     "get_hotspots",
     "get_impact_preview",
     "get_layer_violations",
@@ -55,6 +56,7 @@
     "get_untested_symbols",
     "get_watch_status",
     "index_file",
+    "index_folder",
     "index_repo",
     "invalidate_cache",
     "jcodemunch_guide",
@@ -64,6 +66,7 @@
     "render_diagram",
     "search_ast",
     "search_columns",
+    "search_text",
     "set_tool_tier",
     "suggest_queries",
     "summarize_repo",
