@@ -28,6 +28,13 @@ def test_main_help_shows_priority_command_order() -> None:
     assert daily_idx < weekly_idx < month_idx < range_idx < lifetime_idx < health_idx
 
 
+def test_main_help_lists_export_session_list_flag() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["--help"])
+    assert result.exit_code == 0
+    assert "--export-session-list" in result.output
+
+
 def test_health_help_lists_new_flags() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.main, ["health", "--help"])

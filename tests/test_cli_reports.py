@@ -262,3 +262,35 @@ def test_session_filter_in_period_report(monkeypatch) -> None:
     assert "Period Summary" in result.output
     # Should only show 2 sessions (s1 and s3 from project-alpha)
     assert "2" in result.output
+
+
+def test_export_session_list_daily(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions_with_dirs())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages_with_cost(_sid))
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(cli.main, ["-esl", "sessions.txt", "daily"])
+        assert result.exit_code == 0
+        content = open("sessions.txt", "r", encoding="utf-8").read().strip().splitlines()
+        assert set(content) == {"s1", "s2", "s3"}
+
+
+def test_export_session_list_with_filter(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions_with_dirs())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages_with_cost(_sid))
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(cli.main, ["-esl", "sessions.txt", "-sf", "project-alpha", "daily"])
+        assert result.exit_code == 0
+        content = open("sessions.txt", "r", encoding="utf-8").read().strip().splitlines()
+        assert set(content) == {"s1", "s3"}
+
+
+def test_export_session_list_fails_when_parent_dir_missing(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions_with_dirs())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages_with_cost(_sid))
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(cli.main, ["-esl", "missing/sessions.txt", "daily"])
+        assert result.exit_code != 0
+        assert "parent directory does not exist" in result.output

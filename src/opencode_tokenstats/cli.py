@@ -84,6 +84,7 @@ class OrderedCommandsGroup(click.Group):
 @click.option("--no-warmup", is_flag=True, help="Disable automatic tokenizer warmup")
 @click.option("--model-alias-file", default=None, help="Path to models.conf alias file")
 @click.option("-sf", "--session-filter", default=None, help="Comma-separated list of project root dir names to filter sessions by")
+@click.option("-esl", "--export-session-list", default=None, help="Export selected session IDs to file (one per line)")
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -97,6 +98,7 @@ def main(
     no_warmup: bool,
     model_alias_file: str | None,
     session_filter: str | None,
+    export_session_list: str | None,
 ) -> None:
     """OpenCode TokenStats CLI."""
     session_filter_set: set[str] | None = None
@@ -114,6 +116,7 @@ def main(
         "model_alias_file": model_alias_file,
         "no_warmup": no_warmup,
         "session_filter": session_filter_set,
+        "export_session_list": export_session_list,
     }
 
     if not no_warmup and ctx.invoked_subcommand != "tokenizer-warmup":
@@ -581,6 +584,11 @@ def _build_period_report(
                 filtered_ids.add(sid)
         session_metrics = [c for c in session_metrics if c.session_id in filtered_ids]
 
+    export_session_list = options.get("export_session_list")
+    if isinstance(export_session_list, str) and export_session_list.strip():
+        session_ids = [str(c.session_id) for c in session_metrics if getattr(c, "session_id", None)]
+        _export_session_ids(export_session_list, session_ids)
+
     total_calls = 0
     total_tokens = 0
     total_cost = 0.0
@@ -850,6 +858,33 @@ def _parse_date(value: str) -> datetime:
         return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError as exc:
         raise click.ClickException(f"Invalid date '{value}', expected YYYY-MM-DD") from exc
+
+
+def _normalize_session_ids(session_ids: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in session_ids:
+        sid = raw.strip()
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        out.append(sid)
+    return out
+
+
+def _export_session_ids(path_str: str, session_ids: list[str]) -> None:
+    path = Path(path_str).expanduser()
+    parent = path.parent
+    if not parent.exists():
+        raise click.ClickException(f"Export path parent directory does not exist: {parent}")
+    ids = _normalize_session_ids(session_ids)
+    content = "\n".join(ids)
+    if content:
+        content += "\n"
+    try:
+        path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise click.ClickException(f"Failed to write export session list file '{path}': {exc}") from exc
 
 
 _MONTHS = {
