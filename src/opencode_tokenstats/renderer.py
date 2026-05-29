@@ -33,6 +33,8 @@ COL_REASONING = COL_PURPLE
 COL_CACHE_READ = COL_YELLOW
 COL_TOTAL = COL_ORANGE
 
+TOP_TOOLS_CHUNK_SIZE = 10
+
 
 def _fmt_int(value: Any) -> str:
     try:
@@ -137,6 +139,49 @@ def _build_composition_table(token_composition: dict[str, int], total_tokens: in
     return comp
 
 
+def _build_top_tools_columns(top_tools: list[dict[str, Any]]):
+    displayed = top_tools
+    total_tt_tokens = sum(int(item.get("output_tokens", 0)) for item in displayed) or 1
+    max_tokens = max((int(item.get("output_tokens", 0)) for item in displayed), default=1) or 1
+
+    panels = []
+    for idx in range(0, len(displayed), TOP_TOOLS_CHUNK_SIZE):
+        chunk = displayed[idx: idx + TOP_TOOLS_CHUNK_SIZE]
+        tt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
+        tt.add_column("", style="bold")
+        tt.add_column("", justify="left")
+        tt.add_column("Tokens", justify="right")
+        tt.add_column("%", justify="right")
+        tt.add_column("Calls", justify="right")
+        tt.add_column("Tok/Call", justify="right")
+        for item in chunk:
+            tokens = int(item.get("output_tokens", 0))
+            calls = int(item.get("call_count", 0))
+            pct = tokens / total_tt_tokens * 100
+            bar_text = _color_bar(tokens, max_tokens, COL_GOLD, width=6)
+            tt.add_row(
+                str(item["name"]),
+                bar_text,
+                _fmt_int(tokens),
+                f"{pct:.1f}",
+                _fmt_int(calls),
+                _fmt_float(tokens / calls if calls else 0),
+            )
+
+        start = idx + 1
+        end = idx + len(chunk)
+        panels.append(
+            Panel(
+                tt,
+                title=f"[bold]External Tools ({start}-{end})[/bold]",
+                border_style=COL_GOLD,
+                expand=False,
+            )
+        )
+
+    return Columns(panels, equal=False, padding=0)
+
+
 def print_status_report(mode: str, sessions: list[dict[str, object]]) -> None:
     latest = sessions[0].get("id") if sessions else "-"
     if not RICH_AVAILABLE:
@@ -174,7 +219,7 @@ def print_session_report(
         if token_composition:
             print(f"Token Composition: {token_composition}")
         if top_tools:
-            print(f"Top Tools: {top_tools}")
+            print(f"External Tools: {top_tools}")
         if model_costs:
             print(f"Model Costs: {model_costs}")
         if mcp_stats:
@@ -198,22 +243,7 @@ def print_session_report(
         console.print(Panel(comp, title="[bold]Token Composition[/bold]", border_style=COL_BLUE))
 
     if top_tools:
-        tt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
-        tt.add_column("", style="bold")
-        tt.add_column("", justify="left")
-        tt.add_column("Tokens", justify="right")
-        tt.add_column("%", justify="right")
-        tt.add_column("Calls", justify="right")
-        tt.add_column("Tok/Call", justify="right")
-        total_tt_tokens = sum(int(item.get("output_tokens", 0)) for item in top_tools) or 1
-        max_tokens = max((int(item.get("output_tokens", 0)) for item in top_tools), default=1) or 1
-        for item in top_tools[:13]:
-            tokens = int(item.get("output_tokens", 0))
-            calls = int(item.get("call_count", 0))
-            pct = tokens / total_tt_tokens * 100
-            bar_text = _color_bar(tokens, max_tokens, COL_GOLD, width=6)
-            tt.add_row(str(item["name"]), bar_text, _fmt_int(tokens), f"{pct:.1f}", _fmt_int(calls), _fmt_float(tokens / calls if calls else 0))
-        console.print(Panel(tt, title="[bold]Top Tools[/bold]", border_style=COL_GOLD))
+        console.print(_build_top_tools_columns(top_tools))
 
     if model_costs:
         mt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
@@ -321,7 +351,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         if report.get("token_composition"):
             print(f"Token Composition: {report['token_composition']}")
         if report.get("top_tools"):
-            print(f"Top Tools: {report['top_tools']}")
+            print(f"External Tools: {report['top_tools']}")
         if report.get("model_costs"):
             print(f"Model Costs: {report['model_costs']}")
         if report.get("mcp_stats"):
@@ -438,26 +468,11 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
             )
         top_sess_panel = Panel(ts, title="[bold]Top Sessions[/bold]", border_style=COL_ORANGE)
 
-    # Build Top Tools panel
+    # Build External Tools panel
     top_tools = report.get("top_tools")
-    top_tools_panel = None
+    top_tools_renderable = None
     if isinstance(top_tools, list) and top_tools:
-        tt = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
-        tt.add_column("", style="bold")
-        tt.add_column("", justify="left")
-        tt.add_column("Tokens", justify="right")
-        tt.add_column("%", justify="right")
-        tt.add_column("Calls", justify="right")
-        tt.add_column("Tok/Call", justify="right")
-        total_tt_tokens = sum(int(item.get("output_tokens", 0)) for item in top_tools) or 1
-        max_tokens = max((int(item.get("output_tokens", 0)) for item in top_tools), default=1) or 1
-        for item in top_tools[:13]:
-            tokens = int(item.get("output_tokens", 0))
-            calls = int(item.get("call_count", 0))
-            pct = tokens / total_tt_tokens * 100
-            bar_text = _color_bar(tokens, max_tokens, COL_GOLD, width=6)
-            tt.add_row(str(item["name"]), bar_text, _fmt_int(tokens), f"{pct:.1f}", _fmt_int(calls), _fmt_float(tokens / calls if calls else 0))
-        top_tools_panel = Panel(tt, title="[bold]Top Tools[/bold]", border_style=COL_GOLD, expand=False)
+        top_tools_renderable = _build_top_tools_columns(top_tools)
 
     summary_panel = Panel(summary_table, title="[bold]Period Summary[/bold]", border_style=COL_MAGENTA)
     comp_panel = Panel(comp_table, title="[bold]Token Composition[/bold]", border_style=COL_BLUE)
@@ -559,6 +574,6 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     if panels:
         console.print(Columns(panels, equal=False, padding=0))
 
-    # Top Tools at the bottom (not spanning full width)
-    if top_tools_panel:
-        console.print(top_tools_panel)
+    # External Tools at the bottom (not spanning full width)
+    if top_tools_renderable:
+        console.print(top_tools_renderable)

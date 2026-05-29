@@ -294,3 +294,22 @@ def test_export_session_list_fails_when_parent_dir_missing(monkeypatch) -> None:
         result = runner.invoke(cli.main, ["-esl", "missing/sessions.txt", "daily"])
         assert result.exit_code != 0
         assert "parent directory does not exist" in result.output
+
+
+def test_include_in_top_tools_excludes_core_skill_subagent() -> None:
+    assert cli._include_in_top_tools({"is_core": True, "is_skill": False, "is_subagent": False}) is False
+    assert cli._include_in_top_tools({"is_core": False, "is_skill": True, "is_subagent": False}) is False
+    assert cli._include_in_top_tools({"is_core": False, "is_skill": False, "is_subagent": True}) is False
+    assert cli._include_in_top_tools({"is_core": False, "is_skill": False, "is_subagent": False}) is True
+
+
+def test_max_ext_tools_option_is_accepted(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["--max-ext-tools", "20", "json", "--period", "daily"])
+    assert result.exit_code == 0
+
+
+def test_max_ext_tools_helper_defaults_to_20() -> None:
+    assert cli._max_ext_tools({}) == 20

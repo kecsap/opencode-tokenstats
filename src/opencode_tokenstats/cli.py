@@ -85,6 +85,7 @@ class OrderedCommandsGroup(click.Group):
 @click.option("--model-alias-file", default=None, help="Path to models.conf alias file")
 @click.option("-sf", "--session-filter", default=None, help="Comma-separated list of project root dir names to filter sessions by")
 @click.option("-esl", "--export-session-list", default=None, help="Export selected session IDs to file (one per line)")
+@click.option("--max-ext-tools", default=20, show_default=True, type=click.IntRange(1, None), help="Max external tools to include in External Tools panels")
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -99,6 +100,7 @@ def main(
     model_alias_file: str | None,
     session_filter: str | None,
     export_session_list: str | None,
+    max_ext_tools: int,
 ) -> None:
     """OpenCode TokenStats CLI."""
     session_filter_set: set[str] | None = None
@@ -117,6 +119,7 @@ def main(
         "no_warmup": no_warmup,
         "session_filter": session_filter_set,
         "export_session_list": export_session_list,
+        "max_ext_tools": max_ext_tools,
     }
 
     if not no_warmup and ctx.invoked_subcommand != "tokenizer-warmup":
@@ -314,14 +317,16 @@ def session(ctx: click.Context, session_id: str | None) -> None:
         raise click.ClickException("No sessions available.")
     messages = _get_messages(options, sid)
     canonical = build_canonical_metrics(sid, messages)
+    top_tools_limit = _max_ext_tools(options)
     top_tools = [
         {
             "name": t["tool"],
             "output_tokens": t["tokens"],
             "call_count": t["calls"],
         }
-        for t in canonical.tool_rows[:10]
-    ]
+        for t in canonical.tool_rows
+        if _include_in_top_tools(t)
+    ][:top_tools_limit]
     mcp_stats = {"rows": canonical.mcp_rows, "total_tokens": sum(r["tokens"] for r in canonical.mcp_rows)}
     core_stats = {"rows": canonical.core_rows, "total_tokens": sum(r["tokens"] for r in canonical.core_rows)}
     component_stats = {"rows": canonical.component_family_rows, "total_tokens": sum(r["tokens"] for r in canonical.component_family_rows)}
@@ -564,6 +569,7 @@ def _build_period_report(
     *,
     progress_callback: callable | None = None,
 ) -> dict[str, object]:
+    top_tools_limit = _max_ext_tools(options)
     session_metrics = _collect_period_session_metrics(
         options, start, end, progress_callback=progress_callback
     )
@@ -620,6 +626,8 @@ def _build_period_report(
         for k in token_composition.keys():
             token_composition[k] += int(canonical.token_composition.get(k, 0))
         for t in canonical.tool_rows:
+            if not _include_in_top_tools(t):
+                continue
             tool_map[str(t["tool"])]["output_tokens"] += int(t["tokens"])
             tool_map[str(t["tool"])]["call_count"] += int(t["calls"])
         for r in canonical.mcp_rows:
@@ -669,7 +677,7 @@ def _build_period_report(
         ],
         key=lambda x: (x["output_tokens"], x["call_count"]),
         reverse=True,
-    )[:10]
+    )[:top_tools_limit]
 
     # Format by_activity rows sorted by cost desc
     by_activity = [
@@ -935,6 +943,20 @@ def _month_window(month_arg: str) -> tuple[datetime, datetime]:
 
 
 _LOCAL_TOOL_RE = re.compile(r"^(read|bash|glob|todowrite|task|tokenscope|apply_patch|skill)$")
+_TOP_TOOLS_LIMIT = 20
+
+
+def _max_ext_tools(options: dict[str, object]) -> int:
+    value = options.get("max_ext_tools", _TOP_TOOLS_LIMIT)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return _TOP_TOOLS_LIMIT
+    return parsed if parsed > 0 else _TOP_TOOLS_LIMIT
+
+
+def _include_in_top_tools(row: dict[str, object]) -> bool:
+    return not (bool(row.get("is_core")) or bool(row.get("is_skill")) or bool(row.get("is_subagent")))
 
 
 def _tool_group(tool_name: str) -> str:
