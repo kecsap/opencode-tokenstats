@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from opencode_tokenstats.pricing import (
+    ContextPricing,
     ModelPricing,
     PricingLookup,
     canonical_model_keys,
@@ -53,6 +54,26 @@ def test_estimate_session_cost_uses_reasoning_and_cache_components() -> None:
         web_search_requests=2,
     )
     assert cost == 13.02
+
+
+def test_estimate_session_cost_uses_context_tier_when_threshold_crossed() -> None:
+    pricing = ModelPricing(
+        input=1.0,
+        output=1.0,
+        cache_read=0.0,
+        cache_write=0.0,
+        context_over_200k=ContextPricing(input=2.0, output=2.0, cache_read=0.0, cache_write=0.0, threshold=200_000),
+    )
+    cost = estimate_session_cost_usd(
+        pricing,
+        input_tokens=300_000,
+        output_tokens=0,
+        reasoning_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        context_tokens=300_000,
+    )
+    assert cost == 0.6
 
 
 def test_canonical_model_keys_match_converter_style() -> None:

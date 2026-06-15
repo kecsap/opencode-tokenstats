@@ -137,6 +137,16 @@ class ModelPricing:
     cache_write: float = 0.0
     web_search: float = 0.0
     fast_multiplier: float = 1.0
+    context_over_200k: "ContextPricing | None" = None
+
+
+@dataclass(frozen=True, slots=True)
+class ContextPricing:
+    input: float
+    output: float
+    cache_read: float
+    cache_write: float = 0.0
+    threshold: int = 200_000
 
 
 class PricingLookup:
@@ -162,7 +172,10 @@ class PricingLookup:
         found = self._find_pricing(model_name)
         if found is not None:
             return found
-        return self.pricing_data.get("default", ModelPricing(input=1, output=3, cache_read=0, cache_write=0, web_search=0, fast_multiplier=1))
+        return self.pricing_data.get(
+            "default",
+            ModelPricing(input=1, output=3, cache_read=0, cache_write=0, web_search=0, fast_multiplier=1),
+        )
 
     def has_pricing(self, model_name: str) -> bool:
         return self._find_pricing(model_name) is not None
@@ -216,13 +229,35 @@ def estimate_session_cost_usd(
     cache_read_tokens: int,
     cache_write_tokens: int = 0,
     web_search_requests: int = 0,
+    context_tokens: int | None = None,
 ) -> float:
-    input_cost = (max(0, input_tokens) / 1_000_000) * pricing.input
-    output_cost = ((max(0, output_tokens) + max(0, reasoning_tokens)) / 1_000_000) * pricing.output
-    cache_read_cost = (max(0, cache_read_tokens) / 1_000_000) * pricing.cache_read
-    cache_write_cost = (max(0, cache_write_tokens) / 1_000_000) * pricing.cache_write
+    rate = _select_pricing_rate(pricing, context_tokens)
+    input_cost = (max(0, input_tokens) / 1_000_000) * rate.input
+    output_cost = ((max(0, output_tokens) + max(0, reasoning_tokens)) / 1_000_000) * rate.output
+    cache_read_cost = (max(0, cache_read_tokens) / 1_000_000) * rate.cache_read
+    cache_write_cost = (max(0, cache_write_tokens) / 1_000_000) * rate.cache_write
     web_search_cost = max(0, web_search_requests) * pricing.web_search
     return input_cost + output_cost + cache_read_cost + cache_write_cost + web_search_cost
+
+
+def _select_pricing_rate(pricing: ModelPricing, context_tokens: int | None) -> ModelPricing:
+    tier = pricing.context_over_200k
+    if tier is None:
+        return pricing
+    if context_tokens is None:
+        return pricing
+    threshold = tier.threshold or 200_000
+    if context_tokens > threshold:
+        return ModelPricing(
+            input=tier.input,
+            output=tier.output,
+            cache_read=tier.cache_read,
+            cache_write=tier.cache_write,
+            web_search=pricing.web_search,
+            fast_multiplier=pricing.fast_multiplier,
+            context_over_200k=tier,
+        )
+    return pricing
 
 
 def canonical_model_keys(model: str) -> list[str]:
@@ -263,6 +298,7 @@ def load_pricing_lookup() -> PricingLookup:
             for key, val in payload.items():
                 if not isinstance(key, str) or not isinstance(val, dict):
                     continue
+                context_over_200k = _parse_context_pricing(val.get("contextOver200k") or val.get("context_over_200k"))
                 data[key.lower()] = ModelPricing(
                     input=float(val.get("input", 0) or 0),
                     output=float(val.get("output", 0) or 0),
@@ -270,6 +306,7 @@ def load_pricing_lookup() -> PricingLookup:
                     cache_write=float(val.get("cacheWrite", val.get("cache_write", 0)) or 0),
                     web_search=float(val.get("webSearch", val.get("web_search", 0)) or 0),
                     fast_multiplier=float(val.get("fastMultiplier", val.get("fast_multiplier", 1)) or 1),
+                    context_over_200k=context_over_200k,
                 )
             data.setdefault("default", ModelPricing(input=1.0, output=3.0, cache_read=0.0, cache_write=0.0, web_search=0.0, fast_multiplier=1.0))
             return PricingLookup(data)
@@ -277,3 +314,19 @@ def load_pricing_lookup() -> PricingLookup:
             continue
 
     return PricingLookup({"default": ModelPricing(input=1.0, output=3.0, cache_read=0.0, cache_write=0.0, web_search=0.0, fast_multiplier=1.0)})
+
+
+def _parse_context_pricing(value: object) -> ContextPricing | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        threshold = int(value.get("threshold", 200_000) or 200_000)
+    except (TypeError, ValueError):
+        threshold = 200_000
+    return ContextPricing(
+        input=float(value.get("input", 0) or 0),
+        output=float(value.get("output", 0) or 0),
+        cache_read=float(value.get("cacheRead", value.get("cache_read", 0)) or 0),
+        cache_write=float(value.get("cacheWrite", value.get("cache_write", 0)) or 0),
+        threshold=threshold,
+    )

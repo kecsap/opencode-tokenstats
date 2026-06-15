@@ -31,19 +31,22 @@ class CanonicalMetrics:
     core_rows: list[dict[str, Any]]
     tool_rows: list[dict[str, Any]]
     mcp_rows: list[dict[str, Any]]
+    per_model_costs: list[dict[str, Any]]
 
 
 def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> CanonicalMetrics:
-    telemetry = summarize_telemetry(collect_telemetry_calls(messages))
+    telemetry_calls = collect_telemetry_calls(messages)
+    telemetry = summarize_telemetry(telemetry_calls)
     attribution = collect_content_attribution(messages)
     model = _detect_model(messages)
 
     pricing_lookup = build_default_pricing_lookup()
     estimated_session_cost = _estimate_session_cost_per_call(
-        messages,
+        telemetry_calls,
         fallback_model=model,
         pricing_lookup=pricing_lookup,
     )
+    per_model_costs = _build_per_model_costs(telemetry_calls, fallback_model=model, pricing_lookup=pricing_lookup)
     tool_rows: list[dict[str, Any]] = []
     component_rows: list[dict[str, Any]] = []
     total_tool_tokens = sum(t.output_tokens for t in attribution.tool_usage)
@@ -133,6 +136,7 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
         core_rows=core_rows,
         tool_rows=tool_rows,
         mcp_rows=mcp_rows,
+        per_model_costs=per_model_costs,
     )
 
 
@@ -147,48 +151,126 @@ def _detect_model(messages: list[dict[str, Any]]) -> str:
 
 
 def _detect_model_from_message(message: dict[str, Any]) -> str:
-    info = message.get("info") if isinstance(message.get("info"), dict) else {}
-    model_id = info.get("modelID")
-    provider_id = info.get("providerID")
+    provider_id, model_id = _message_model_ref(message)
     if isinstance(model_id, str) and model_id:
         if isinstance(provider_id, str) and provider_id:
             return f"{provider_id}/{model_id}"
         return model_id
-    model = info.get("model") if isinstance(info.get("model"), dict) else {}
-    nested_model_id = model.get("modelID")
-    nested_provider_id = model.get("providerID")
-    if isinstance(nested_model_id, str) and nested_model_id:
-        if isinstance(nested_provider_id, str) and nested_provider_id:
-            return f"{nested_provider_id}/{nested_model_id}"
-        return nested_model_id
     return "unknown"
 
 
 def _estimate_session_cost_per_call(
-    messages: list[dict[str, Any]],
+    calls: list[Any],
     *,
     fallback_model: str,
     pricing_lookup: PricingLookup,
 ) -> float:
     total = 0.0
-    for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
-        model_name = _detect_model_from_message(msg)
-        if model_name == "unknown":
+    for call in calls:
+        model_name = PricingLookup.build_lookup_key(call.provider_id, call.model_id)
+        if not model_name:
             model_name = fallback_model
         pricing = pricing_lookup.get_pricing(model_name)
-        for call in collect_telemetry_calls([msg]):
-            total += estimate_session_cost_usd(
-                pricing,
-                input_tokens=call.input_tokens,
-                output_tokens=call.output_tokens,
-                reasoning_tokens=call.reasoning_tokens,
-                cache_read_tokens=call.cache_read_tokens,
-                cache_write_tokens=call.cache_write_tokens,
-                web_search_requests=call.web_search_requests,
-            )
+        context_tokens = call.input_tokens + call.cache_read_tokens + call.cache_write_tokens
+        total += estimate_session_cost_usd(
+            pricing,
+            input_tokens=call.input_tokens,
+            output_tokens=call.output_tokens,
+            reasoning_tokens=call.reasoning_tokens,
+            cache_read_tokens=call.cache_read_tokens,
+            cache_write_tokens=call.cache_write_tokens,
+            web_search_requests=call.web_search_requests,
+            context_tokens=context_tokens,
+        )
     return total
+
+
+def _build_per_model_costs(
+    calls: list[Any],
+    *,
+    fallback_model: str,
+    pricing_lookup: PricingLookup,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for call in calls:
+        model_name = PricingLookup.build_lookup_key(call.provider_id, call.model_id)
+        if not model_name:
+            model_name = fallback_model
+        pricing = pricing_lookup.get_pricing(model_name)
+        context_tokens = call.input_tokens + call.cache_read_tokens + call.cache_write_tokens
+        api_cost = call.cost
+        estimated_cost = estimate_session_cost_usd(
+            pricing,
+            input_tokens=call.input_tokens,
+            output_tokens=call.output_tokens,
+            reasoning_tokens=call.reasoning_tokens,
+            cache_read_tokens=call.cache_read_tokens,
+            cache_write_tokens=call.cache_write_tokens,
+            web_search_requests=call.web_search_requests,
+            context_tokens=context_tokens,
+        )
+        row = grouped.get(model_name)
+        if row is None:
+            row = {
+                "model": model_name,
+                "tokens": 0,
+                "api_cost": 0.0,
+                "estimated_cost": 0.0,
+            }
+            grouped[model_name] = row
+        row["tokens"] += call.input_tokens + call.output_tokens + call.reasoning_tokens + call.cache_read_tokens + call.cache_write_tokens
+        row["api_cost"] += api_cost
+        row["estimated_cost"] += estimated_cost
+
+    rows: list[dict[str, Any]] = []
+    for row in grouped.values():
+        api_cost = float(row["api_cost"])
+        estimated_cost = float(row["estimated_cost"])
+        model_name = str(row["model"])
+        primary_cost = api_cost if api_cost > 0 else estimated_cost
+        rows.append(
+            {
+                "model": model_name,
+                "tokens": int(row["tokens"]),
+                "api_cost": round(api_cost, 6),
+                "estimated_cost": round(estimated_cost if api_cost <= 0 else 0.0, 6),
+                "cost": round(primary_cost, 6),
+            }
+        )
+    rows.sort(key=lambda x: (float(x["api_cost"]), float(x["estimated_cost"])), reverse=True)
+    return rows
+
+
+def _message_model_ref(message: dict[str, Any]) -> tuple[str | None, str | None]:
+    def _str(value: Any) -> str | None:
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    info = message.get("info") if isinstance(message.get("info"), dict) else {}
+    data = message.get("data") if isinstance(message.get("data"), dict) else {}
+    model = message.get("model") if isinstance(message.get("model"), dict) else {}
+    info_model = info.get("model") if isinstance(info.get("model"), dict) else {}
+    data_model = data.get("model") if isinstance(data.get("model"), dict) else {}
+
+    provider_id = _str(
+        info.get("providerID")
+        or data.get("providerID")
+        or message.get("providerID")
+        or model.get("providerID")
+        or info_model.get("providerID")
+        or data_model.get("providerID")
+    )
+    model_id = _str(
+        info.get("modelID")
+        or data.get("modelID")
+        or message.get("modelID")
+        or model.get("modelID")
+        or model.get("id")
+        or info_model.get("modelID")
+        or info_model.get("id")
+        or data_model.get("modelID")
+        or data_model.get("id")
+    )
+    return provider_id, model_id
 
 
 def _is_local_model(model: str) -> bool:

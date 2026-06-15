@@ -28,6 +28,7 @@ def _make_canonical(tool_rows: list[dict] | None = None) -> CanonicalMetrics:
         core_rows=[],
         tool_rows=tool_rows or [],
         mcp_rows=[],
+        per_model_costs=[],
     )
 
 

@@ -10,6 +10,8 @@ class TelemetrySchemaError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class TelemetryCall:
+    provider_id: str | None = None
+    model_id: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
     reasoning_tokens: int = 0
@@ -42,6 +44,7 @@ class TelemetrySummary:
     api_calls: int = 0
     total_cost: float = 0.0
     most_recent_call: TelemetryCall | None = None
+    per_model_usage: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +69,7 @@ def collect_telemetry_calls(messages: list[dict[str, Any]]) -> list[TelemetryCal
             continue
 
         parts = _parts_from_message(message)
-        step_calls = _step_finish_calls(parts)
+        step_calls = _step_finish_calls(parts, message)
         if step_calls:
             calls.extend(step_calls)
             continue
@@ -90,6 +93,7 @@ def summarize_telemetry(calls: list[TelemetryCall]) -> TelemetrySummary:
     web_search_requests = sum(c.web_search_requests for c in calls)
     total_cost = sum(c.cost for c in calls)
     most_recent_call = _most_recent_call(calls)
+    per_model_usage = _summarize_calls_by_model(calls)
 
     return TelemetrySummary(
         input_tokens=input_tokens,
@@ -108,6 +112,7 @@ def summarize_telemetry(calls: list[TelemetryCall]) -> TelemetrySummary:
         api_calls=len(calls),
         total_cost=total_cost,
         most_recent_call=most_recent_call,
+        per_model_usage=per_model_usage,
     )
 
 
@@ -155,11 +160,12 @@ def _parts_from_message(message: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _step_finish_calls(parts: list[dict[str, Any]]) -> list[TelemetryCall]:
+def _step_finish_calls(parts: list[dict[str, Any]], message: dict[str, Any]) -> list[TelemetryCall]:
     calls: list[TelemetryCall] = []
     for part in parts:
         if part.get("type") != "step-finish":
             continue
+        provider_id, model_id = _model_ref_from_part(message, part)
         tokens = part.get("tokens") if isinstance(part.get("tokens"), dict) else {}
         cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
         server_tool_use = (
@@ -169,6 +175,8 @@ def _step_finish_calls(parts: list[dict[str, Any]]) -> list[TelemetryCall]:
             server_tool_use = part.get("server_tool_use")
         calls.append(
             TelemetryCall(
+                provider_id=provider_id,
+                model_id=model_id,
                 input_tokens=_safe_int(tokens.get("input")),
                 output_tokens=_safe_int(tokens.get("output")),
                 reasoning_tokens=_safe_int(tokens.get("reasoning")),
@@ -184,6 +192,7 @@ def _step_finish_calls(parts: list[dict[str, Any]]) -> list[TelemetryCall]:
 
 
 def _fallback_message_call(message: dict[str, Any]) -> TelemetryCall | None:
+    provider_id, model_id = _model_ref_from_message(message)
     info = message.get("info") if isinstance(message.get("info"), dict) else {}
     tokens = info.get("tokens") if isinstance(info.get("tokens"), dict) else {}
     if not tokens and isinstance(message.get("tokens"), dict):
@@ -214,6 +223,8 @@ def _fallback_message_call(message: dict[str, Any]) -> TelemetryCall | None:
         )
 
     return TelemetryCall(
+        provider_id=provider_id,
+        model_id=model_id,
         input_tokens=_safe_int(tokens.get("input")),
         output_tokens=_safe_int(tokens.get("output")),
         reasoning_tokens=_safe_int(tokens.get("reasoning")),
@@ -272,6 +283,92 @@ def _safe_float(value: Any) -> float:
         return 0.0
 
 
+def _normalize_string(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def _model_ref_from_message(message: dict[str, Any]) -> tuple[str | None, str | None]:
+    info = message.get("info") if isinstance(message.get("info"), dict) else {}
+    data = message.get("data") if isinstance(message.get("data"), dict) else {}
+    model = message.get("model") if isinstance(message.get("model"), dict) else {}
+    nested_info_model = info.get("model") if isinstance(info.get("model"), dict) else {}
+    nested_data_model = data.get("model") if isinstance(data.get("model"), dict) else {}
+
+    provider_id = _normalize_string(
+        info.get("providerID")
+        or data.get("providerID")
+        or message.get("providerID")
+        or model.get("providerID")
+        or nested_info_model.get("providerID")
+        or nested_data_model.get("providerID")
+    )
+    model_id = _normalize_string(
+        info.get("modelID")
+        or data.get("modelID")
+        or message.get("modelID")
+        or model.get("modelID")
+        or model.get("id")
+        or nested_info_model.get("modelID")
+        or nested_info_model.get("id")
+        or nested_data_model.get("modelID")
+        or nested_data_model.get("id")
+    )
+    return provider_id, model_id
+
+
+def _model_ref_from_part(message: dict[str, Any], part: dict[str, Any]) -> tuple[str | None, str | None]:
+    part_model = part.get("model") if isinstance(part.get("model"), dict) else {}
+    if isinstance(part_model, dict):
+        provider_id = _normalize_string(part_model.get("providerID"))
+        model_id = _normalize_string(part_model.get("modelID") or part_model.get("id"))
+        if provider_id or model_id:
+            return provider_id, model_id
+    return _model_ref_from_message(message)
+
+
+def _summarize_calls_by_model(calls: list[TelemetryCall]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for call in calls:
+        key = f"{call.provider_id or ''}\u0000{call.model_id or ''}"
+        row = grouped.get(key)
+        if row is None:
+            row = {
+                "provider_id": call.provider_id,
+                "model_id": call.model_id,
+                "model_name": f"{call.provider_id}/{call.model_id}" if call.provider_id and call.model_id else (call.model_id or call.provider_id or "unknown model"),
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "api_cost": 0.0,
+                "api_call_count": 0,
+                "calls_with_cache_read": 0,
+                "calls_with_cache_write": 0,
+            }
+            grouped[key] = row
+
+        row["input_tokens"] += call.input_tokens
+        row["output_tokens"] += call.output_tokens
+        row["reasoning_tokens"] += call.reasoning_tokens
+        row["cache_read_tokens"] += call.cache_read_tokens
+        row["cache_write_tokens"] += call.cache_write_tokens
+        row["api_cost"] += call.cost
+        row["api_call_count"] += 1
+        if call.cache_read_tokens > 0:
+            row["calls_with_cache_read"] += 1
+        if call.cache_write_tokens > 0:
+            row["calls_with_cache_write"] += 1
+
+    rows = list(grouped.values())
+    rows.sort(key=lambda x: (int(x["api_call_count"]), str(x["model_name"])), reverse=True)
+    return rows
+
+
 def _most_recent_call(calls: list[TelemetryCall]) -> TelemetryCall | None:
     with_timestamp = [c for c in calls if c.timestamp_ms is not None]
     if with_timestamp:
@@ -294,4 +391,5 @@ def _merge_summaries(a: TelemetrySummary, b: TelemetrySummary) -> TelemetrySumma
         api_calls=a.api_calls + b.api_calls,
         total_cost=a.total_cost + b.total_cost,
         most_recent_call=most_recent,
+        per_model_usage=a.per_model_usage + b.per_model_usage,
     )

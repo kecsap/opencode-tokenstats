@@ -95,6 +95,33 @@ def test_model_includes_provider_prefix() -> None:
     assert out.model == "azure/gpt-5.3-codex"
 
 
+def test_canonical_metrics_reads_data_and_part_model_shapes() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "data": {
+                "providerID": "openai",
+                "modelID": "gpt-a",
+                "tokens": {"input": 4, "output": 2, "reasoning": 1, "cache": {"read": 0, "write": 0}},
+                "cost": 0.0,
+            },
+            "parts": [
+                {
+                    "type": "step-finish",
+                    "model": {"providerID": "openai", "modelID": "gpt-a"},
+                    "tokens": {"input": 4, "output": 2, "reasoning": 1, "cache": {"read": 0, "write": 0}},
+                    "cost": 0.0,
+                }
+            ],
+        }
+    ]
+
+    out = build_canonical_metrics("s-data", messages)
+    assert out.model == "openai/gpt-a"
+    assert out.per_model_costs[0]["model"] == "openai/gpt-a"
+    assert out.per_model_costs[0]["tokens"] == 7
+
+
 def test_local_model_has_zero_api_cost(tmp_path) -> None:
     from opencode_tokenstats.canonical_metrics import _is_local_model
     import os
@@ -219,11 +246,57 @@ def test_estimated_cost_uses_per_call_models(tmp_path) -> None:
         out = build_canonical_metrics("s-mixed", messages)
         assert out.actual_cost_usd == 0.0
         assert out.estimated_cost_usd == 19.05
+        assert {row["model"] for row in out.per_model_costs} == {"openai/gpt-a", "openai/gpt-b"}
     finally:
         if old_pricing_env is None:
             os.environ.pop("OPENCODE_MODEL_PRICING_FILE", None)
         else:
             os.environ["OPENCODE_MODEL_PRICING_FILE"] = old_pricing_env
+
+
+def test_per_model_costs_keep_api_only_for_trusted_billed_model_rows() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "providerID": "openai",
+                "modelID": "gpt-5.4-mini-fast",
+                "tokens": {
+                    "input": 100,
+                    "output": 50,
+                    "reasoning": 10,
+                    "cache": {"read": 20, "write": 0},
+                },
+                "cost": 0.0,
+            },
+            "parts": [{"type": "text", "text": "fast"}],
+        },
+        {
+            "role": "assistant",
+            "info": {
+                "providerID": "openai",
+                "modelID": "gpt-5.4",
+                "tokens": {
+                    "input": 200,
+                    "output": 100,
+                    "reasoning": 0,
+                    "cache": {"read": 0, "write": 0},
+                },
+                "cost": 12.34,
+            },
+            "parts": [{"type": "text", "text": "main"}],
+        },
+    ]
+
+    out = build_canonical_metrics("s-actual-mixed", messages)
+
+    assert out.actual_cost_usd == 12.34
+    model_rows = {row["model"]: row for row in out.per_model_costs}
+    assert model_rows["openai/gpt-5.4-mini-fast"]["api_cost"] == 0.0
+    assert model_rows["openai/gpt-5.4-mini-fast"]["cost"] == model_rows["openai/gpt-5.4-mini-fast"]["estimated_cost"]
+    assert model_rows["openai/gpt-5.4"]["api_cost"] == 12.34
+    assert model_rows["openai/gpt-5.4"]["estimated_cost"] == 0.0
+    assert model_rows["openai/gpt-5.4"]["cost"] == 12.34
 
 
 def test_component_family_rows_aggregate_by_group() -> None:

@@ -41,6 +41,7 @@ def calculate_cost_summary(
         cache_read_tokens=telemetry.cache_read_tokens,
         cache_write_tokens=telemetry.cache_write_tokens,
         web_search_requests=telemetry.web_search_requests,
+        context_tokens=telemetry.input_tokens + telemetry.cache_read_tokens + telemetry.cache_write_tokens,
     )
 
     has_activity = telemetry.api_calls > 0 and (

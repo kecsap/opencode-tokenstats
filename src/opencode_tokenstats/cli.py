@@ -333,15 +333,12 @@ def session(ctx: click.Context, session_id: str | None) -> None:
     mcp_stats = {"rows": canonical.mcp_rows, "total_tokens": sum(r["tokens"] for r in canonical.mcp_rows)}
     core_stats = {"rows": canonical.core_rows, "total_tokens": sum(r["tokens"] for r in canonical.core_rows)}
     component_stats = {"rows": canonical.component_family_rows, "total_tokens": sum(r["tokens"] for r in canonical.component_family_rows)}
-    model_costs = [
-        {
-            "model": canonical.model,
-            "tokens": canonical.session_total_tokens,
-            "api_cost": round(canonical.actual_cost_usd, 6),
-            "estimated_cost": round(canonical.estimated_cost_usd, 6),
-            "cost": round(canonical.actual_cost_usd if canonical.actual_cost_usd > 0 else canonical.estimated_cost_usd, 6),
-        }
-    ]
+    model_costs = _finalize_model_costs(
+        _accumulate_model_cost_rows(
+            canonical.per_model_costs,
+            load_model_aliases(options.get("model_alias_file")),
+        )
+    )
     print_session_report(
         sid,
         canonical.api_calls,
@@ -659,10 +656,11 @@ def _build_period_report(
             else:
                 component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"]["tokens"] += float(r["tokens"])
                 component_map[f"{r['component_type']}|{r['component_group']}|{r['component_name']}"]["calls"] += int(r.get("calls", 0))
-        model_key = resolve_alias(canonical.model, aliases)
-        model_map[model_key]["api_cost"] += float(canonical.actual_cost_usd)
-        model_map[model_key]["estimated_cost"] += float(canonical.estimated_cost_usd)
-        model_map[model_key]["tokens"] += canonical.session_total_tokens
+        for model_row in canonical.per_model_costs:
+            model_key = resolve_alias(str(model_row["model"]), aliases)
+            model_map[model_key]["api_cost"] += float(model_row["api_cost"])
+            model_map[model_key]["estimated_cost"] += float(model_row["estimated_cost"])
+            model_map[model_key]["tokens"] += int(model_row["tokens"])
 
         # Classify session and aggregate by activity
         category = classify_session(canonical)
@@ -1261,42 +1259,58 @@ def _finalize_component_stats_canonical(component_map: dict[str, dict[str, float
 
 
 def _extract_model_id_from_message(message: dict[str, object]) -> str:
-    info = message.get("info")
-    if isinstance(info, dict):
-        model_id = info.get("modelID")
-        provider_id = info.get("providerID")
-        if isinstance(model_id, str) and model_id:
-            if isinstance(provider_id, str) and provider_id:
-                return f"{provider_id}/{model_id}"
-            return model_id
-        model = info.get("model")
-        if isinstance(model, dict):
-            nested_model_id = model.get("modelID")
-            nested_provider_id = model.get("providerID")
-            if isinstance(nested_model_id, str) and nested_model_id:
-                if isinstance(nested_provider_id, str) and nested_provider_id:
-                    return f"{nested_provider_id}/{nested_model_id}"
-                return nested_model_id
+    def _str(value: object) -> str | None:
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    info = message.get("info") if isinstance(message.get("info"), dict) else {}
+    data = message.get("data") if isinstance(message.get("data"), dict) else {}
+    model = message.get("model") if isinstance(message.get("model"), dict) else {}
+    info_model = info.get("model") if isinstance(info.get("model"), dict) else {}
+    data_model = data.get("model") if isinstance(data.get("model"), dict) else {}
+
+    provider_id = _str(
+        info.get("providerID")
+        or data.get("providerID")
+        or message.get("providerID")
+        or model.get("providerID")
+        or info_model.get("providerID")
+        or data_model.get("providerID")
+    )
+    model_id = _str(
+        info.get("modelID")
+        or data.get("modelID")
+        or message.get("modelID")
+        or model.get("modelID")
+        or model.get("id")
+        or info_model.get("modelID")
+        or info_model.get("id")
+        or data_model.get("modelID")
+        or data_model.get("id")
+    )
+    if model_id:
+        if provider_id:
+            return f"{provider_id}/{model_id}"
+        return model_id
     return "unknown"
 
 
 def _build_model_costs_from_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:
     aliases = load_model_aliases()
-    model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0})
-    _accumulate_model_costs(model_map, messages, aliases)
+    canonical = build_canonical_metrics("__model_costs__", messages)
+    model_map = _accumulate_model_cost_rows(canonical.per_model_costs, aliases)
     return _finalize_model_costs(model_map)
 
 
-def _accumulate_model_costs(model_map: dict[str, dict[str, float]], messages: list[dict[str, object]], aliases: dict[str, str]) -> None:
-    for msg in messages:
-        role = msg.get("role")
-        if role != "assistant":
-            continue
-        model_id = resolve_alias(_extract_model_id_from_message(msg), aliases)
-        telemetry = summarize_telemetry(collect_telemetry_calls([msg]))
-        model_map[model_id]["api_cost"] += float(telemetry.total_cost)
-        # Estimated cost would need pricing lookup; for now use API cost as proxy for estimated
-        model_map[model_id]["estimated_cost"] += float(telemetry.total_cost)
+def _accumulate_model_cost_rows(
+    model_rows: list[dict[str, object]], aliases: dict[str, str]
+) -> dict[str, dict[str, float]]:
+    model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0.0})
+    for row in model_rows:
+        model_id = resolve_alias(str(row.get("model", "unknown")), aliases)
+        model_map[model_id]["api_cost"] += float(row.get("api_cost", 0.0))
+        model_map[model_id]["estimated_cost"] += float(row.get("estimated_cost", 0.0))
+        model_map[model_id]["tokens"] += float(row.get("tokens", 0.0))
+    return model_map
 
 
 def _finalize_model_costs(model_map: dict[str, dict[str, float]]) -> list[dict[str, object]]:
@@ -1304,6 +1318,8 @@ def _finalize_model_costs(model_map: dict[str, dict[str, float]]) -> list[dict[s
     for model, costs in model_map.items():
         api_cost = costs.get("api_cost", 0.0)
         estimated_cost = costs.get("estimated_cost", 0.0)
+        if api_cost > 0:
+            estimated_cost = 0.0
         primary_cost = api_cost if api_cost > 0 else estimated_cost
         tokens = int(costs.get("tokens", 0))
         rows.append(

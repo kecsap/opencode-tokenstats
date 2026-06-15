@@ -6,7 +6,7 @@ from typing import Any
 
 from .activity_classifier import classify_session, CATEGORY_LABELS
 from .canonical_metrics import CanonicalMetrics
-from .pricing import load_model_aliases
+from .pricing import load_model_aliases, resolve_alias
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,12 +54,24 @@ def build_report_schema(
 
     aliases = load_model_aliases(model_alias_file)
     for m in session_metrics:
-        model_key = aliases.get(m.model, m.model)
-        if model_key not in models:
-            models[model_key] = {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0}
-        models[model_key]["api_cost"] = round(models[model_key]["api_cost"] + m.actual_cost_usd, 6)
-        models[model_key]["estimated_cost"] = round(models[model_key]["estimated_cost"] + m.estimated_cost_usd, 6)
-        models[model_key]["tokens"] += m.session_total_tokens
+        per_model_costs = getattr(m, "per_model_costs", None)
+        if isinstance(per_model_costs, list) and per_model_costs:
+            for row in per_model_costs:
+                model_key = resolve_alias(str(row.get("model", m.model)), aliases)
+                if model_key not in models:
+                    models[model_key] = {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0}
+                models[model_key]["api_cost"] = round(models[model_key]["api_cost"] + float(row.get("api_cost", 0.0)), 6)
+                models[model_key]["estimated_cost"] = round(
+                    models[model_key]["estimated_cost"] + float(row.get("estimated_cost", 0.0)), 6
+                )
+                models[model_key]["tokens"] += int(row.get("tokens", 0))
+        else:
+            model_key = resolve_alias(m.model, aliases)
+            if model_key not in models:
+                models[model_key] = {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0}
+            models[model_key]["estimated_cost"] = round(models[model_key]["estimated_cost"] + m.estimated_cost_usd, 6)
+            models[model_key]["tokens"] += m.session_total_tokens
+
         for row in m.tool_rows:
             name = str(row["tool"])
             if name not in tools:
@@ -87,6 +99,8 @@ def build_report_schema(
     for k, costs in models.items():
         api_cost = costs["api_cost"]
         estimated_cost = costs["estimated_cost"]
+        if api_cost > 0:
+            estimated_cost = 0.0
         primary_cost = api_cost if api_cost > 0 else estimated_cost
         tokens = int(costs["tokens"])
         model_rows.append(

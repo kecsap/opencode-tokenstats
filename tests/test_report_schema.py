@@ -42,6 +42,7 @@ def _metric() -> CanonicalMetrics:
         core_rows=[],
         tool_rows=[{"tool": "lean-ctx_ctx_search", "tokens": 4, "percent": 100.0, "calls": 2}],
         mcp_rows=[{"name": "lean", "tokens": 4, "calls": 2, "tokens_per_call": 2.0, "percent": 100.0}],
+        per_model_costs=[{"model": "gpt-5.3-codex", "tokens": 19, "api_cost": 0.01, "estimated_cost": 0.0, "cost": 0.01}],
     )
 
 
@@ -74,8 +75,8 @@ def test_report_to_markdown() -> None:
     assert "## Top Models" in md
 
 
-def test_model_costs_separate_api_and_estimated() -> None:
-    """Test that API costs and estimated costs are tracked separately."""
+def test_model_costs_use_api_when_model_row_has_trusted_billed_cost() -> None:
+    """Model row uses API cost when billed calls are attributed to that model."""
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = datetime(2026, 1, 2, tzinfo=UTC)
     report = build_report_schema(
@@ -86,10 +87,8 @@ def test_model_costs_separate_api_and_estimated() -> None:
     model = models[0]
     assert model["model"] == "gpt-5.3-codex"
     assert model["api_cost"] == 0.01
-    assert model["estimated_cost"] == 0.02
-    # Primary cost should be API cost when available
+    assert model["estimated_cost"] == 0.0
     assert model["cost"] == 0.01
-    # Tokens should be present
     assert model["tokens"] == 19
 
 
@@ -113,6 +112,7 @@ def test_model_costs_uses_estimated_when_no_api() -> None:
         core_rows=metric.core_rows,
         tool_rows=metric.tool_rows,
         mcp_rows=metric.mcp_rows,
+        per_model_costs=[{"model": "gpt-5.3-codex", "tokens": 19, "api_cost": 0.0, "estimated_cost": 0.05, "cost": 0.05}],
     )
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = datetime(2026, 1, 2, tzinfo=UTC)
@@ -124,5 +124,84 @@ def test_model_costs_uses_estimated_when_no_api() -> None:
     model = models[0]
     assert model["api_cost"] == 0.0
     assert model["estimated_cost"] == 0.05
-    # Primary cost should be estimated when API cost is 0
     assert model["cost"] == 0.05
+
+
+def test_model_costs_merge_same_model_into_one_api_row_when_any_billed_cost_exists() -> None:
+    metric_a = _metric()
+    metric_b = CanonicalMetrics(
+        session_id="s2",
+        model="gpt-5.3-codex",
+        input_tokens=metric_a.input_tokens,
+        output_tokens=metric_a.output_tokens,
+        reasoning_tokens=metric_a.reasoning_tokens,
+        cache_read_tokens=metric_a.cache_read_tokens,
+        session_total_tokens=metric_a.session_total_tokens,
+        api_calls=metric_a.api_calls,
+        actual_cost_usd=0.0,
+        estimated_cost_usd=0.05,
+        token_composition=metric_a.token_composition,
+        component_rows=metric_a.component_rows,
+        component_family_rows=metric_a.component_family_rows,
+        core_rows=metric_a.core_rows,
+        tool_rows=metric_a.tool_rows,
+        mcp_rows=metric_a.mcp_rows,
+        per_model_costs=[{"model": "gpt-5.3-codex", "tokens": 19, "api_cost": 0.0, "estimated_cost": 0.05, "cost": 0.05}],
+    )
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 2, tzinfo=UTC)
+    report = build_report_schema(
+        period="daily", mode="local", start=start, end=end, session_metrics=[metric_a, metric_b]
+    )
+
+    models = report["models"]
+    assert len(models) == 1
+    model = models[0]
+    assert model["model"] == "gpt-5.3-codex"
+    assert model["api_cost"] == 0.01
+    assert model["estimated_cost"] == 0.0
+    assert model["cost"] == 0.01
+    assert model["tokens"] == 38
+
+
+def test_model_costs_use_estimated_for_unbilled_model_rows_in_mixed_sessions() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 2, tzinfo=UTC)
+    report = build_report_schema(
+        period="daily",
+        mode="local",
+        start=start,
+        end=end,
+        session_metrics=[
+            CanonicalMetrics(
+                session_id="s-mixed",
+                model="openai/gpt-5.4",
+                input_tokens=300,
+                output_tokens=150,
+                reasoning_tokens=10,
+                cache_read_tokens=20,
+                session_total_tokens=480,
+                api_calls=2,
+                actual_cost_usd=12.34,
+                estimated_cost_usd=0.25,
+                token_composition={"input": 300, "cache_read": 20, "output": 150, "reasoning": 10},
+                component_rows=[],
+                component_family_rows=[],
+                core_rows=[],
+                tool_rows=[],
+                mcp_rows=[],
+                per_model_costs=[
+                    {"model": "openai/gpt-5.4-mini-fast", "tokens": 180, "api_cost": 0.0, "estimated_cost": 0.08, "cost": 0.08},
+                    {"model": "openai/gpt-5.4", "tokens": 300, "api_cost": 12.34, "estimated_cost": 0.0, "cost": 12.34},
+                ],
+            )
+        ],
+    )
+
+    models = {row["model"]: row for row in report["models"]}
+    assert models["openai/gpt-5.4-mini-fast"]["api_cost"] == 0.0
+    assert models["openai/gpt-5.4-mini-fast"]["estimated_cost"] == 0.08
+    assert models["openai/gpt-5.4-mini-fast"]["cost"] == 0.08
+    assert models["openai/gpt-5.4"]["api_cost"] == 12.34
+    assert models["openai/gpt-5.4"]["estimated_cost"] == 0.0
+    assert models["openai/gpt-5.4"]["cost"] == 12.34
