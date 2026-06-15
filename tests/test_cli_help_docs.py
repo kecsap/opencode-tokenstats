@@ -35,6 +35,13 @@ def test_main_help_lists_export_session_list_flag() -> None:
     assert "--export-session-list" in result.output
 
 
+def test_main_help_lists_session_output_dir_flag() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["--help"])
+    assert result.exit_code == 0
+    assert "--session-output-dir" in result.output
+
+
 def test_health_help_lists_new_flags() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.main, ["health", "--help"])

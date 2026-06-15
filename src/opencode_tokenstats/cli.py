@@ -85,6 +85,7 @@ class OrderedCommandsGroup(click.Group):
 @click.option("--model-alias-file", default=None, help="Path to models.conf alias file")
 @click.option("-sf", "--session-filter", default=None, help="Comma-separated list of project root dir names to filter sessions by")
 @click.option("-esl", "--export-session-list", default=None, help="Export selected session IDs to file (one per line)")
+@click.option("-o", "--session-output-dir", default=None, help="Export selected session transcripts to a directory")
 @click.option("--max-ext-tools", default=20, show_default=True, type=click.IntRange(1, None), help="Max external tools to include in External Tools panels")
 @click.pass_context
 def main(
@@ -100,6 +101,7 @@ def main(
     model_alias_file: str | None,
     session_filter: str | None,
     export_session_list: str | None,
+    session_output_dir: str | None,
     max_ext_tools: int,
 ) -> None:
     """OpenCode TokenStats CLI."""
@@ -119,6 +121,7 @@ def main(
         "no_warmup": no_warmup,
         "session_filter": session_filter_set,
         "export_session_list": export_session_list,
+        "session_output_dir": session_output_dir,
         "max_ext_tools": max_ext_tools,
     }
 
@@ -437,6 +440,9 @@ def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
     session_dirs_map: dict[str, str] = {
         str(sess.get("id", "")): str(sess.get("directory", "")) for sess in sessions
     }
+    session_lookup: dict[str, dict[str, object]] = {
+        str(sess.get("id", "")): sess for sess in sessions if isinstance(sess.get("id"), str) and str(sess.get("id"))
+    }
 
     # Apply session filter for JSON output
     session_filter = ctx.obj.get("session_filter")
@@ -447,6 +453,11 @@ def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
             if rd in session_filter:
                 filtered_ids.add(sid)
         session_metrics = [c for c in session_metrics if c.session_id in filtered_ids]
+
+    session_output_dir = ctx.obj.get("session_output_dir")
+    if isinstance(session_output_dir, str) and session_output_dir.strip():
+        session_ids = [str(c.session_id) for c in session_metrics if getattr(c, "session_id", None)]
+        _export_session_transcripts(session_output_dir, session_ids, ctx.obj, session_lookup)
 
     payload = build_report_schema(
         period=period,
@@ -579,6 +590,9 @@ def _build_period_report(
     session_dirs: dict[str, str] = {
         str(sess.get("id", "")): str(sess.get("directory", "")) for sess in sessions
     }
+    session_lookup: dict[str, dict[str, object]] = {
+        str(sess.get("id", "")): sess for sess in sessions if isinstance(sess.get("id"), str) and str(sess.get("id"))
+    }
 
     # Apply session filter: keep only sessions whose root_dir matches the filter
     session_filter = options.get("session_filter")
@@ -594,6 +608,11 @@ def _build_period_report(
     if isinstance(export_session_list, str) and export_session_list.strip():
         session_ids = [str(c.session_id) for c in session_metrics if getattr(c, "session_id", None)]
         _export_session_ids(export_session_list, session_ids)
+
+    session_output_dir = options.get("session_output_dir")
+    if isinstance(session_output_dir, str) and session_output_dir.strip():
+        session_ids = [str(c.session_id) for c in session_metrics if getattr(c, "session_id", None)]
+        _export_session_transcripts(session_output_dir, session_ids, options, session_lookup)
 
     total_calls = 0
     total_tokens = 0
@@ -893,6 +912,112 @@ def _export_session_ids(path_str: str, session_ids: list[str]) -> None:
         path.write_text(content, encoding="utf-8")
     except OSError as exc:
         raise click.ClickException(f"Failed to write export session list file '{path}': {exc}") from exc
+
+
+def _json_dict(value: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _render_transcript_part(part: object) -> str:
+    if isinstance(part, dict):
+        raw = part.get("data")
+        if isinstance(raw, str):
+            data = _json_dict(raw)
+        elif isinstance(raw, dict):
+            data = raw
+        else:
+            data = part
+    elif isinstance(part, str):
+        data = _json_dict(part)
+    else:
+        return ""
+
+    typ = str(data.get("type", "unknown"))
+
+    if typ == "text":
+        return str(data.get("text", ""))
+
+    if typ == "tool":
+        state = data.get("state", {})
+        state_dict = state if isinstance(state, dict) else {}
+        out = state_dict.get("output")
+        err = state_dict.get("error")
+        tool = str(data.get("tool", "tool"))
+
+        if out:
+            return f"[tool:{tool}]\n{out}"
+        if err:
+            return f"[tool:{tool} ERROR]\n{err}"
+        return f"[tool:{tool}] {json.dumps(state_dict, ensure_ascii=False)}"
+
+    if typ in {"reasoning", "step-start", "step-finish"}:
+        return ""
+
+    return json.dumps(data, ensure_ascii=False)
+
+
+def _build_session_transcript_text(
+    session_id: str,
+    session: dict[str, object] | None,
+    messages: list[dict[str, object]],
+) -> str:
+    lines: list[str] = []
+    lines.append(f"# session: {session_id}")
+    lines.append(f"# title: {session.get('title', '') if isinstance(session, dict) else ''}")
+    lines.append(f"# directory: {session.get('directory', '') if isinstance(session, dict) else ''}")
+    created = _session_created_at(session) if isinstance(session, dict) else None
+    lines.append(f"# created: {created.isoformat() if created is not None else ''}")
+    lines.append("")
+
+    for idx, message in enumerate(messages, start=1):
+        role = str(message.get("role", "unknown"))
+        lines.append("")
+        lines.append("")
+        lines.append(f"## {role} {idx}")
+
+        parts = message.get("parts")
+        if isinstance(parts, list):
+            for part in parts:
+                text = _render_transcript_part(part).strip()
+                if text:
+                    lines.append("")
+                    lines.append(text)
+
+        fallback = message.get("content") or message.get("text")
+        if isinstance(fallback, str) and fallback.strip():
+            lines.append("")
+            lines.append(fallback.strip())
+
+    return "\n".join(lines) + "\n"
+
+
+def _export_session_transcripts(
+    output_dir_str: str,
+    session_ids: list[str],
+    options: dict[str, object],
+    session_lookup: dict[str, dict[str, object]],
+) -> None:
+    output_dir = Path(output_dir_str).expanduser()
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise click.ClickException(f"Failed to create session output dir '{output_dir}': {exc}") from exc
+
+    for session_id in _normalize_session_ids(session_ids):
+        try:
+            messages = _get_messages(options, session_id)
+            transcript = _build_session_transcript_text(session_id, session_lookup.get(session_id), messages)
+            (output_dir / f"{session_id}.txt").write_text(transcript, encoding="utf-8")
+        except OSError as exc:
+            raise click.ClickException(
+                f"Failed to write transcript for session '{session_id}' in '{output_dir}': {exc}"
+            ) from exc
+        except Exception as exc:
+            raise click.ClickException(f"Failed to export transcript for session '{session_id}': {exc}") from exc
 
 
 _MONTHS = {

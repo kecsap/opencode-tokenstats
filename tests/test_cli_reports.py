@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from click.testing import CliRunner
 
 from opencode_tokenstats import cli
@@ -284,6 +285,19 @@ def test_export_session_list_with_filter(monkeypatch) -> None:
         assert result.exit_code == 0
         content = open("sessions.txt", "r", encoding="utf-8").read().strip().splitlines()
         assert set(content) == {"s1", "s3"}
+
+
+def test_session_output_dir_exports_transcripts(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions_with_dirs())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages_with_cost(_sid))
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(cli.main, ["-o", "transcripts", "daily"])
+        assert result.exit_code == 0
+        files = sorted(p.name for p in Path("transcripts").glob("*.txt"))
+        assert files == ["s1.txt", "s2.txt", "s3.txt"]
+        content = open("transcripts/s1.txt", "r", encoding="utf-8").read()
+        assert "# session: s1" in content
 
 
 def test_export_session_list_fails_when_parent_dir_missing(monkeypatch) -> None:
