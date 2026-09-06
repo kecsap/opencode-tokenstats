@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 import os
+import re
 from typing import Any
 
 
@@ -326,7 +327,7 @@ class TokenizerRegistry:
 
     def _resolve_openai_model(self, provider: str, model_id: str) -> str | None:
         model_key = _canonicalize(model_id)
-        if provider in {"openai", "opencode", "azure"}:
+        if provider in {"openai", "azure"} or _looks_like_openai_model(model_key):
             if not model_key:
                 return "cl100k_base"
             if model_key.startswith("gpt-5"):
@@ -407,6 +408,17 @@ def _canonicalize(value: str | None) -> str | None:
     if value is None:
         return None
     return value.split("/")[-1].strip().lower() if value.strip() else None
+
+
+def _looks_like_openai_model(model_key: str | None) -> bool:
+    if not model_key:
+        return False
+    return (
+        model_key in OPENAI_MODEL_MAP
+        or model_key.startswith("gpt-")
+        or model_key.startswith("chatgpt-")
+        or re.match(r"^o\d(?:-|$)", model_key) is not None
+    )
 
 
 def _model_leaf(hub: str) -> str:

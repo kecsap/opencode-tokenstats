@@ -24,7 +24,7 @@ def test_collects_category_totals_and_tool_usage_semantics() -> None:
                 {
                     "type": "tool",
                     "tool": "bash",
-                    "state": {"status": "error", "output": "oops"},
+                    "state": {"status": "error", "error": "oops"},
                 },
             ],
         },
@@ -43,6 +43,15 @@ def test_collects_category_totals_and_tool_usage_semantics() -> None:
                     "tool": "read",
                     "state": {"status": "running", "output": "not-done"},
                 },
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {
+                        "status": "error",
+                        "error": "interrupted",
+                        "metadata": {"interrupted": True, "output": "partial-output"},
+                    },
+                },
             ],
         },
     ]
@@ -59,13 +68,14 @@ def test_collects_category_totals_and_tool_usage_semantics() -> None:
 
     # call_count includes all tool calls regardless of completion status
     assert read_stat.call_count == 3
-    assert bash_stat.call_count == 1
+    assert bash_stat.call_count == 2
 
-    # output_tokens include only completed outputs
+    # output_tokens include completed outputs plus replayable/interrupted errors
     expected_read_tokens = len("file-content") + len("k: v")
+    expected_bash_tokens = len("oops") + len("partial-output")
     assert read_stat.output_tokens == expected_read_tokens
-    assert bash_stat.output_tokens == 0
-    assert result.totals.tool_output_tokens == expected_read_tokens
+    assert bash_stat.output_tokens == expected_bash_tokens
+    assert result.totals.tool_output_tokens == expected_read_tokens + expected_bash_tokens
 
     # explicit separation from schema/context estimate
     assert result.observed_tools_only is True
@@ -86,6 +96,22 @@ def test_ignores_non_assistant_non_user_text_but_counts_system_if_present() -> N
     assert result.totals.system_tokens == len("PROMPT")
     assert result.totals.user_tokens == 0
     assert result.totals.assistant_tokens == 0
+
+
+def test_ignored_text_parts_do_not_count() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "parts": [
+                {"type": "text", "text": "visible"},
+                {"type": "text", "text": "hidden", "ignored": True},
+            ],
+        }
+    ]
+
+    result = collect_content_attribution(messages, token_counter=FakeCounter())
+
+    assert result.totals.assistant_tokens == len("visible")
 
 
 def test_model_based_attribution_exposes_approximate_warning() -> None:

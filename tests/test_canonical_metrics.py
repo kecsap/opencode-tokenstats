@@ -71,10 +71,10 @@ def test_canonical_metrics_extracts_skill_and_subagent_components() -> None:
     assert ("core", "explore") in names
     assert ("core", "general") in names
 
-    # skill/subagent estimated session burden = raw tokens * api_calls
+    # skill/subagent estimates stay as single observed catalog/context burden
     for row in out.component_rows:
         if row["component_type"] in {"skill", "core"}:
-            assert row["estimated_session_tokens"] == row["tokens"] * out.api_calls
+            assert row["estimated_session_tokens"] == row["tokens"]
 
 
 def test_model_includes_provider_prefix() -> None:
@@ -297,6 +297,40 @@ def test_per_model_costs_keep_api_only_for_trusted_billed_model_rows() -> None:
     assert model_rows["openai/gpt-5.4"]["api_cost"] == 12.34
     assert model_rows["openai/gpt-5.4"]["estimated_cost"] == 0.0
     assert model_rows["openai/gpt-5.4"]["cost"] == 12.34
+
+
+def test_build_canonical_metrics_adds_session_aggregate_and_revert_warnings() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "providerID": "openai",
+                "modelID": "gpt-5.3-codex",
+            },
+            "parts": [
+                {
+                    "type": "step-finish",
+                    "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                    "cost": 0.1,
+                }
+            ],
+        }
+    ]
+
+    out = build_canonical_metrics(
+        "s-warn",
+        messages,
+        session_info={
+            "data": {
+                "tokens": {"input": 12, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.2,
+                "revert": {"messageID": "msg_123"},
+            }
+        },
+    )
+
+    assert any("session aggregate mismatch" in warning for warning in out.warnings)
+    assert any("active revert" in warning for warning in out.warnings)
 
 
 def test_component_family_rows_aggregate_by_group() -> None:

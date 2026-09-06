@@ -176,6 +176,8 @@ def _count_text_parts(parts: list[dict[str, Any]], counter: TokenCounter) -> int
     for part in parts:
         if part.get("type") != "text":
             continue
+        if part.get("ignored") is True:
+            continue
         text = part.get("text")
         if isinstance(text, str):
             total += counter.count(text)
@@ -224,11 +226,8 @@ def _collect_tool_parts(
         state = part.get("state")
         if not isinstance(state, dict):
             continue
-        if state.get("status") != "completed":
-            continue
 
-        output = state.get("output")
-        text = _tool_output_to_text(output)
+        text = _tool_state_output_to_text(state)
         if not text:
             continue
         tool_output_tokens[tool_name] = tool_output_tokens.get(tool_name, 0) + counter.count(text)
@@ -297,4 +296,23 @@ def _tool_output_to_text(output: Any) -> str:
             if value_text:
                 parts.append(f"{key}: {value_text}")
         return "\n".join(parts)
+    return ""
+
+
+def _tool_state_output_to_text(state: dict[str, Any]) -> str:
+    status = state.get("status")
+    if status == "completed":
+        return _tool_output_to_text(state.get("output"))
+
+    if status == "error":
+        metadata = state.get("metadata") if isinstance(state.get("metadata"), dict) else {}
+        if metadata.get("interrupted") is True:
+            interrupted_output = metadata.get("output")
+            if isinstance(interrupted_output, str) and interrupted_output.strip():
+                return interrupted_output.strip()
+        error = state.get("error")
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+        return _tool_output_to_text(state.get("output"))
+
     return ""

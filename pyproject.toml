@@ -5,9 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "opencode-tokenstats"
 version = "0.1.0"
-description = "API-first OpenCode TokenStats CLI"
-readme = "README.md"
+description = "Local-first OpenCode TokenStats CLI"
+readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
+keywords = ["opencode", "tokens", "analytics", "cli", "telemetry"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Utilities",
+]
 dependencies = [
   "click>=8.1.0",
   "httpx>=0.27.0",
@@ -15,9 +27,16 @@ dependencies = [
   "tqdm>=4.66.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/kecsap/opencode-tokenstats"
+Repository = "https://github.com/kecsap/opencode-tokenstats"
+Issues = "https://github.com/kecsap/opencode-tokenstats/issues"
+
 [project.optional-dependencies]
 dev = [
+  "build>=1.2.0",
   "pytest>=8.0.0",
+  "twine>=5.0.0",
 ]
 
 [project.scripts]

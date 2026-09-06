@@ -319,7 +319,8 @@ def session(ctx: click.Context, session_id: str | None) -> None:
     if not sid:
         raise click.ClickException("No sessions available.")
     messages = _get_messages(options, sid)
-    canonical = build_canonical_metrics(sid, messages)
+    session_info = _find_session_info(sessions, sid) or _get_session_info(options, sid)
+    canonical = build_canonical_metrics(sid, messages, session_info=session_info)
     top_tools_limit = _max_ext_tools(options)
     top_tools = [
         {
@@ -776,27 +777,27 @@ def _collect_period_session_metrics(
         return out
 
     # Parallel fetch messages for eligible sessions
-    def fetch_session(sid: str) -> tuple[str, list[dict[str, object]]]:
+    def fetch_session(sid: str, session_info: dict[str, object]) -> tuple[str, dict[str, object], list[dict[str, object]]]:
         messages = _get_messages(options, sid)
-        return (sid, messages)
+        return (sid, session_info, messages)
 
     max_workers = min(len(eligible_sessions), 8)  # Cap at 8 workers
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(fetch_session, sid): sid for sid, _ in eligible_sessions}
+        futures = {executor.submit(fetch_session, sid, sess): sid for sid, sess in eligible_sessions}
 
         results = {}
         for future in as_completed(futures):
             try:
-                sid, messages = future.result()
-                results[sid] = messages
+                sid, session_info, messages = future.result()
+                results[sid] = (session_info, messages)
             except Exception:
                 pass
 
     # Build canonical metrics in parallel across CPU cores.
     worker_count = min(len(results), max(os.cpu_count() or 1, 1))
     if worker_count <= 1:
-        for sid, messages in results.items():
-            out.append(build_canonical_metrics(sid, messages))
+        for sid, (session_info, messages) in results.items():
+            out.append(build_canonical_metrics(sid, messages, session_info=session_info))
             if progress_callback:
                 progress_callback(len(out), len(eligible_sessions))
         return out
@@ -804,8 +805,8 @@ def _collect_period_session_metrics(
     start_method = "fork" if sys.platform.startswith("linux") else "spawn"
     with ProcessPoolExecutor(max_workers=worker_count, mp_context=mp.get_context(start_method)) as executor:
         futures = {
-            executor.submit(_build_session_metrics, sid, messages): sid
-            for sid, messages in results.items()
+            executor.submit(_build_session_metrics, sid, messages, session_info): sid
+            for sid, (session_info, messages) in results.items()
         }
         done = 0
         for future in as_completed(futures):
@@ -814,8 +815,8 @@ def _collect_period_session_metrics(
                 out.append(future.result())
             except Exception:
                 # Best-effort: fall back to local compute if worker fails.
-                messages = results.get(sid, [])
-                out.append(build_canonical_metrics(sid, messages))
+                session_info, messages = results.get(sid, ({}, []))
+                out.append(build_canonical_metrics(sid, messages, session_info=session_info))
             done += 1
             if progress_callback:
                 progress_callback(done, len(eligible_sessions))
@@ -823,8 +824,12 @@ def _collect_period_session_metrics(
     return out
 
 
-def _build_session_metrics(session_id: str, messages: list[dict[str, object]]) -> object:
-    return build_canonical_metrics(session_id, messages)
+def _build_session_metrics(
+    session_id: str,
+    messages: list[dict[str, object]],
+    session_info: dict[str, object] | None = None,
+) -> object:
+    return build_canonical_metrics(session_id, messages, session_info=session_info)
 
 
 def _print_report(label: str, report: dict[str, object]) -> None:
@@ -863,6 +868,31 @@ def _get_messages(options: dict[str, object], session_id: str) -> list[dict[str,
     ) as client:
         service = SessionService(client)
         return service.get_messages(session_id)
+
+
+def _get_session_info(options: dict[str, object], session_id: str) -> dict[str, object]:
+    if options["mode"] == "local":
+        db_path = LocalSessionService.find_database_path(options.get("db_path"))
+        service = LocalSessionService(db_path=db_path)
+        return service.get_session(session_id)
+
+    with OpencodeApiClient(
+        base_url=options["base_url"],
+        username=options["username"],
+        password=options["password"],
+        timeout=options["timeout"],
+        retries=options["retries"],
+    ) as client:
+        service = SessionService(client)
+        data = service.get_session(session_id)
+        return data if isinstance(data, dict) else {}
+
+
+def _find_session_info(sessions: list[dict[str, object]], session_id: str) -> dict[str, object] | None:
+    for session in sessions:
+        if session.get("id") == session_id:
+            return session
+    return None
 
 
 def _session_created_at(session: dict[str, object]) -> datetime | None:

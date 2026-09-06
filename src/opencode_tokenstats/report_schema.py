@@ -51,9 +51,13 @@ def build_report_schema(
     components: dict[tuple[str, str, str], int] = {}
     skills: dict[str, int] = {}
     subagents: dict[str, int] = {}
+    warnings: list[str] = []
 
     aliases = load_model_aliases(model_alias_file)
     for m in session_metrics:
+        for warning in getattr(m, "warnings", []):
+            if isinstance(warning, str) and warning and warning not in warnings:
+                warnings.append(warning)
         per_model_costs = getattr(m, "per_model_costs", None)
         if isinstance(per_model_costs, list) and per_model_costs:
             for row in per_model_costs:
@@ -193,7 +197,7 @@ def build_report_schema(
             "observed_tools_only": True,
             "components": component_rows,
         },
-        "warnings": [],
+        "warnings": warnings,
         "period_series": period_series,
         "projects": [],
         "models": model_rows,
@@ -221,4 +225,10 @@ def report_to_markdown(report: dict[str, Any]) -> str:
     lines.append("## Top Models")
     for model in report.get("models", [])[:10]:
         lines.append(f"- {model['model']}: API=${model['api_cost']}, Est=${model['estimated_cost']}")
+    warnings = report.get("warnings", [])
+    if warnings:
+        lines.append("")
+        lines.append("## Warnings")
+        for warning in warnings:
+            lines.append(f"- {warning}")
     return "\n".join(lines) + "\n"

@@ -19,6 +19,20 @@ def test_resolve_provider_default_huggingface() -> None:
     assert resolved.tokenizer.value == "Xenova/claude-tokenizer"
 
 
+def test_resolve_opencode_claude_uses_huggingface_not_openai() -> None:
+    registry = TokenizerRegistry()
+    resolved = registry.resolve_model("opencode", "claude-sonnet-4-20250514")
+    assert resolved.tokenizer.kind == "huggingface"
+    assert resolved.tokenizer.value == "Xenova/claude-tokenizer"
+
+
+def test_resolve_opencode_gpt_family_uses_tiktoken() -> None:
+    registry = TokenizerRegistry()
+    resolved = registry.resolve_model("opencode", "gpt-5.4-mini")
+    assert resolved.tokenizer.kind == "tiktoken"
+    assert resolved.tokenizer.value == "gpt-4o"
+
+
 def test_count_approx_fallback_warning() -> None:
     registry = TokenizerRegistry()
     result = registry.count("abcd", TokenizerSpec(kind="approx", value=None))

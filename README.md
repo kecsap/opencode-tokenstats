@@ -1,48 +1,181 @@
-# opencode-tokenstats
+# <img src="https://raw.githubusercontent.com/kecsap/opencode-tokenstats/master/assets/logo.svg" alt="opencode-tokenstats" width="40" valign="middle" /> opencode-tokenstats
 
-Local-first OpenCode TokenStats CLI.
+<p align="center">
+  <strong>See where your OpenCode tokens and cost actually go.</strong><br />
+  Local-first CLI for session analytics, model cost breakdowns, tool usage, and exportable reports.
+</p>
+
+<p align="center">
+  <a href="https://github.com/kecsap/opencode-tokenstats"><img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+" /></a>
+  <a href="https://github.com/kecsap/opencode-tokenstats/stargazers"><img src="https://img.shields.io/github/stars/kecsap/opencode-tokenstats?style=flat-square" alt="GitHub stars" /></a>
+  <a href="https://github.com/kecsap/opencode-tokenstats"><img src="https://img.shields.io/badge/OpenCode-local--first-7c3aed" alt="OpenCode local-first" /></a>
+</p>
+
+opencode-tokenstats reads OpenCode session data and turns it into useful summaries:
+
+- **token composition**: input, output, reasoning, cache read/write
+- **costs by model**: API cost when present, estimates when needed
+- **tool usage**: top tools, MCP servers, component families, OpenCode core usage
+- **period reports**: daily, weekly, monthly, custom range, lifetime
+- **machine output**: JSON or Markdown for downstream automation
+
+It is built for one job: **make OpenCode usage legible without Grafana, proxies, or extra infra**.
+
+---
+
+## Why this exists
+
+OpenCode already has the raw data. This project makes it readable.
+
+- No dashboard stack to deploy
+- No data leaving your machine in local mode
+- No wrapper around OpenCode
+- Fast enough for daily use
+- Useful for both humans and scripts
+
+---
 
 ## Install
 
+### From PyPI
+
 ```bash
-pip install -e .[dev]
+pip install opencode-tokenstats
+octoken --help
 ```
 
-## Run Locally (No Installation)
+### From source
+
+```bash
+git clone git@github.com:kecsap/opencode-tokenstats.git
+cd opencode-tokenstats
+pip install -e .[dev]
+octoken --help
+```
+
+### Run without installing
 
 ```bash
 PYTHONPATH=src python -m opencode_tokenstats.cli --help
-python src/opencode_tokenstats/cli.py --help
 PYTHONPATH=src python -m opencode_tokenstats.cli --mode local health
 PYTHONPATH=src python -m opencode_tokenstats.cli --mode api health
 ```
 
-This runs the CLI directly from source code without installing the package.
+---
 
-## CLI
+## Quick start
 
 ```bash
-octoken health
+# local mode is the default
+octoken status
+octoken daily
+octoken weekly
+
+# inspect one session
+octoken session --session-id <session-id>
+
+# export machine-readable output
+octoken json --period daily --format json
 ```
 
-## Command Reference
+### Common flows
 
-- `health`: checks data source health; optional tokenizer and compatibility diagnostics
-- `session`: show canonical summary for one session
-- `status`: source mode + session count + latest session id
-- `daily`: aggregate last 24h
-- `weekly`: aggregate last 7d
-- `month [month]`: aggregate last 30d, or stats for a specific month (e.g. `month may`, `month 05`)
-- `lifetime`: aggregate all available sessions
-- `range --from-date YYYY-MM-DD --to-date YYYY-MM-DD`: explicit window aggregate (e.g. `--from-date 2026-05-01 --to-date 2026-05-07`)
-- `json --period daily|weekly|month|lifetime --format json|md`: canonical report schema output
-- `tokenizer-warmup`: preload tokenizer caches
+```bash
+# API-backed checks
+octoken --mode api health
+octoken --mode api weekly
 
-### Global Options
+# explicit time window
+octoken range --from-date 2026-05-01 --to-date 2026-05-07
 
-- `--model-alias-file <path>`: path to models.conf alias file (overrides default search)
+# warm tokenizer caches up front
+octoken tokenizer-warmup --pair local:qwen3.6-27b --pair openai:gpt-5.3-codex
+```
 
-## Makefile Shortcuts
+---
+
+## What you get
+
+The report focuses on the stuff that matters when AI usage gets expensive or noisy:
+
+- **Period Summary** for totals and high-level usage
+- **Token Composition** to separate productive output from context overhead
+- **Model Costs** to see where spend concentrates
+- **Top Tools** to spot tool-heavy sessions
+- **Component Contribution** to understand MCP/skill/subagent families
+- **OpenCode Contribution** to measure built-in tool overhead
+- **MCP Servers** to isolate external tool usage
+- **By Activity / Top Sessions** for period dashboards
+
+If you know [CodeBurn](https://github.com/getagentseal/codeburn), the goal is similar: make AI usage visible. This project is narrower and lazier on purpose: **OpenCode-first, simple CLI, no extra stack**.
+
+---
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `health` | Check data source health, tokenizer, and compatibility |
+| `status` | Current mode, session count, latest session |
+| `session` | Canonical summary for one session |
+| `daily` | Aggregate last 24 hours |
+| `weekly` | Aggregate last 7 days |
+| `month [month]` | Aggregate last 30 days or a named month |
+| `range --from-date --to-date` | Aggregate an explicit date window |
+| `lifetime` | Aggregate all sessions |
+| `json --period ... --format json|md` | Structured export |
+| `tokenizer-warmup` | Preload tokenizer caches |
+
+### Global options
+
+- `--mode [local|api]`
+- `--timeout <seconds>`
+- `--retries <count>`
+- `--no-warmup`
+- `--model-alias-file <path>`
+- `--session-filter <root1,root2,...>`
+
+---
+
+## Local mode vs API mode
+
+### Local mode
+
+- reads OpenCode SQLite data directly
+- default mode
+- fastest path for local analytics
+
+### API mode
+
+- talks to the OpenCode API
+- useful when API telemetry is the source of truth
+- good for compatibility and remote checks
+
+Default base URL: `http://127.0.0.1:4096`
+
+---
+
+## Model aliases
+
+Use `models.conf` to merge model variants under one label and mark local models as zero-cost:
+
+```ini
+gpt-unified = azure/gpt-5.4 openai/gpt-5.4
+claude-pro = anthropic/claude-sonnet-4
+
+@local myollama/* myllamacpp/*
+@local *qwen36*
+```
+
+Load order:
+
+1. `--model-alias-file`
+2. `OPTOKEN_MODEL_ALIAS_FILE`
+3. `./models.conf`
+
+---
+
+## Development
 
 ```bash
 make help
@@ -57,146 +190,40 @@ make install-wheel
 ```
 
 Notes:
-- `make run*` and `make health*` run from source (`PYTHONPATH=src`), no install required.
-- `make build` creates wheel/sdist in `dist/`.
 
-## Common Workflows
+- `make run*` and `make health*` run from source with `PYTHONPATH=src`
+- `make build` creates wheel and sdist in `dist/`
 
-```bash
-# Local default status + quick session aggregate
-octoken status
-octoken daily
-octoken lifetime
+---
 
-# API mode
-octoken --mode api status
-octoken --mode api weekly
-
-# One specific session
-octoken session --session-id <session-id>
-
-# Canonical machine output
-octoken json --period month --format json
-octoken json --period daily --format md
-```
-
-## Tokenizer Check Examples
+## Release to PyPI
 
 ```bash
-octoken health --check-tokenizer
-octoken health --check-tokenizer --model-id qwen3.6-27b
-octoken --mode api health --check-tokenizer --provider-id openai --model-id gpt-5.3-codex
+python -m pip install -U build twine
+rm -rf dist build *.egg-info
+python -m build
+python -m twine check dist/*
+python -m twine upload dist/*
 ```
 
-## Compatibility Mode Examples
+Recommended once, before first release:
 
-```bash
-# Conservative local-only compatibility signals
-octoken health --compat-mode strict_local
+1. create the `opencode-tokenstats` project on PyPI
+2. switch to **trusted publishing** in PyPI instead of API tokens
+3. add a license file
+4. add screenshots to `assets/` and reference them with absolute GitHub URLs so they render on PyPI too
 
-# API-only strict compatibility signals
-octoken --mode api health --compat-mode strict_api --compat-source api
+---
 
-# TokenScope-like heuristic schema estimates from observed tool calls
-octoken health --compat-mode tokenscope_compat
+## README polish ideas
 
-# Run compatibility check for an explicit session id
-octoken health --compat-mode tokenscope_compat --compat-session-id <session-id>
-```
+Want it to feel more like CodeBurn or Magic Context?
 
-## Warmup Behavior
+1. add a real dashboard screenshot: `assets/dashboard.png`
+2. add a second image for session drill-down: `assets/session.png`
+3. add a tiny animated GIF of `octoken weekly`
+4. add a short "Why local-first?" section near the top
+5. add a PyPI badge after first release
+6. add a "sample report" block copied from real output
 
-- Tokenizer warmup is enabled by default for normal commands.
-- Warmup runs in parallel by default (up to 4 workers) for faster cache loading.
-- Disable with `--no-warmup` when needed.
-
-```bash
-# Default (auto warmup on)
-octoken daily
-
-# Disable warmup for this run
-octoken --no-warmup daily
-
-# Explicit preload command
-octoken tokenizer-warmup --pair local:qwen3.6-27b --pair openai:gpt-5.3-codex
-```
-
-## Model Costs
-
-The Model Costs table shows both API costs (from telemetry) and estimated costs (from pricing lookup):
-
-- **Cost (API)**: Actual cost reported by the API provider
-- **Cost (Est)**: Estimated cost based on token counts and pricing data
-- Primary cost uses API cost when available, falls back to estimated cost otherwise
-
-## Component Contribution
-
-The Component Contribution table groups all calls by component family (e.g., `lean-ctx`, `jcodemunch`, `codegraph2`). Each row aggregates all calls within the same family, showing combined token usage and call counts. It also includes an aggregate row for OpenCode core usage: `type=core`, `group=opencode-core`.
-
-**Mixed types:** When a component group contains entries of different types (e.g., both `tool` and `skill` under `svelte`), they are merged into a single row with type `mixed`. Groups with a single type retain that type.
-
-**Skill calls:** When a skill is loaded via the `skill` tool, the call is attributed to the specific skill name (e.g., `caveman`, `impeccable`) rather than a generic "skill" entry. Hyphenated skill names are preserved as-is unless multiple skills share the same prefix (e.g., `implement-slice` and `implement-plan` merge under `implement`), and non-hyphenated skill names still group naturally with matching tool families (e.g., `svelte` with `svelte_*` tools).
-
-**Subagent calls:** When a subagent is launched via the `task` tool, the call is attributed to the specific subagent type (e.g., `explore`, `general`) rather than a generic "task" entry. Subagents are grouped with tools sharing the same component group.
-
-## OpenCode Contribution
-
-The OpenCode Contribution table shows core OpenCode tools and built-in components (`read`, `bash`, `grep`, `glob`, `todowrite`, `apply_patch`, `webfetch`, core skills like `plan`/`implement`, and core subagents like `explore`/`general`). `invalid` tool rows are merged into `general` in this table. These are internal tools that are not MCP server calls, shown separately from external component contributions.
-
-## MCP Servers
-
-The MCP Servers table shows only MCP server tool calls. Skill calls, subagent calls, and core OpenCode tools are excluded. This table provides a narrower view focused on external tool dependencies.
-
-## By Activity
-
-The **By Activity** panel classifies sessions into activity categories based on tools used, showing aggregated token usage, interaction volume, and cost per category:
-
-- **category**: Activity label (e.g., `Coding`, `Exploration`, `Build/Deploy`)
-- **tokens**: Total session tokens in this category
-- **turns**: Total API calls (model invocations) across sessions
-- **cost**: Combined estimated cost (USD)
-
-Classification rules (tool-pattern first):
-
-- **Coding**: Session used edit tools (`edit`, `write`, `apply_patch`, `apply`)
-- **Build/Deploy**: Bash-only sessions (no edits)
-- **Exploration**: Search/read-only patterns (`grep`, `glob`, `read`)
-- **Planning**: Task tools without edits, or `plan`/`implement` skills
-- **Delegation**: Sessions with subagent calls (`is_subagent` flag)
-- **Conversation**: No tools used
-- **General**: Fallback for other tool patterns (MCP servers, skill tool, etc.)
-
-## Top Sessions
-
-The **Top Sessions** panel shows the 5 most expensive sessions by cost:
-
-- **root dir**: Last directory segment of session title (e.g., `/home/user/eju` -> `eju`). Falls back to session ID if title is unavailable.
-- **tokens**: Total session tokens
-- **cost**: Estimated cost (USD)
-
-## Model Aliases (models.conf)
-
-Merge multiple model IDs under a single alias via `models.conf`:
-
-```
-# models.conf (in current working directory)
-gpt-unified = azure/gpt-5.4 openai/gpt-5.4
-claude-pro = anthropic/claude-sonnet-4
-
-# Mark models as local (no API cost) using wildcard patterns
-@local myollama/* myllamacpp/*
-@local *qwen36*
-```
-
-**Configuration:**
-- File format: `alias_name = model1 model2 model3`
-- Local models: `@local pattern1 pattern2` (supports `*` wildcard)
-- Comments: lines starting with `#`
-- Blank lines are skipped
-
-**Load locations (priority order):**
-1. `--model-alias-file` CLI option
-2. `OPTOKEN_MODEL_ALIAS_FILE` environment variable
-3. Current working directory: `models.conf`
-
-Aliases are applied when aggregating model costs across sessions. Local models have API cost set to 0.
+The shortest path: **logo + one good screenshot + tighter intro**. That gets you 80% of the fancy.

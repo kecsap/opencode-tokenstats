@@ -49,13 +49,22 @@ class LocalSessionService:
         try:
             conn = sqlite3.connect(path)
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                SELECT id, title, parent_id, time_created, directory
-                FROM session
-                ORDER BY time_created DESC
-                """
-            ).fetchall()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT id, title, parent_id, time_created, directory, data AS session_data
+                    FROM session
+                    ORDER BY time_created DESC
+                    """
+                ).fetchall()
+            except sqlite3.Error:
+                rows = conn.execute(
+                    """
+                    SELECT id, title, parent_id, time_created, directory
+                    FROM session
+                    ORDER BY time_created DESC
+                    """
+                ).fetchall()
             return [
                 {
                     "id": row["id"],
@@ -63,6 +72,7 @@ class LocalSessionService:
                     "parent_id": row["parent_id"],
                     "time_created": row["time_created"],
                     "directory": row["directory"],
+                    "data": _parse_json_dict(row["session_data"]) if "session_data" in row.keys() else {},
                 }
                 for row in rows
             ]
@@ -117,6 +127,58 @@ class LocalSessionService:
                         parts.append(part_raw)
 
             return list(by_message.values())
+        except sqlite3.Error as exc:
+            raise LocalStorageError(f"Failed to read OpenCode database at {path}: {exc}") from exc
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def get_session(self, session_id: str) -> dict[str, object]:
+        path = self.db_path or self.find_database_path()
+        if not path:
+            raise LocalStorageError(
+                "OpenCode local database not found. Set --db-path or OPENCODE_DATABASE_FILE."
+            )
+
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT id, title, parent_id, time_created, directory, data AS session_data
+                    FROM session
+                    WHERE id = ?
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                ).fetchone()
+            except sqlite3.Error:
+                row = conn.execute(
+                    """
+                    SELECT id, title, parent_id, time_created, directory
+                    FROM session
+                    WHERE id = ?
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                ).fetchone()
+
+            if row is None:
+                return {}
+
+            return {
+                "id": row["id"],
+                "title": row["title"],
+                "parent_id": row["parent_id"],
+                "time_created": row["time_created"],
+                "directory": row["directory"],
+                "data": _parse_json_dict(row["session_data"]) if "session_data" in row.keys() else {},
+            }
         except sqlite3.Error as exc:
             raise LocalStorageError(f"Failed to read OpenCode database at {path}: {exc}") from exc
         finally:

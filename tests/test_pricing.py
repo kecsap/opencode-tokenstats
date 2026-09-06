@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from opencode_tokenstats.pricing import (
     ContextPricing,
     ModelPricing,
@@ -34,6 +36,18 @@ def test_pricing_exact_normalized_and_prefix_fallback() -> None:
     assert normalized.input == 3
     assert prefix.input == 4
     assert fallback.input == 1
+
+
+def test_pricing_prefix_match_requires_version_boundary() -> None:
+    lookup = PricingLookup(
+        {
+            "claude-sonnet": ModelPricing(input=4, output=12, cache_read=0),
+            "default": ModelPricing(input=1, output=3, cache_read=0),
+        }
+    )
+
+    assert lookup.get_pricing("claude-sonnet-4-20250514").input == 4
+    assert lookup.get_pricing("claude-sonnetx").input == 1
 
 
 def test_estimate_session_cost_uses_reasoning_and_cache_components() -> None:
@@ -74,6 +88,30 @@ def test_estimate_session_cost_uses_context_tier_when_threshold_crossed() -> Non
         context_tokens=300_000,
     )
     assert cost == 0.6
+
+
+def test_estimate_session_cost_uses_highest_matching_context_tier() -> None:
+    pricing = ModelPricing(
+        input=1.0,
+        output=1.0,
+        cache_read=0.5,
+        cache_write=0.25,
+        tiers=(
+            ContextPricing(input=2.0, output=2.0, cache_read=0.0, cache_write=0.0, threshold=100_000),
+            ContextPricing(input=3.0, output=4.0, cache_read=0.0, cache_write=0.0, threshold=200_000),
+        ),
+        context_over_200k=ContextPricing(input=9.0, output=9.0, cache_read=9.0, cache_write=9.0, threshold=200_000),
+    )
+    cost = estimate_session_cost_usd(
+        pricing,
+        input_tokens=300_000,
+        output_tokens=100_000,
+        reasoning_tokens=0,
+        cache_read_tokens=50_000,
+        cache_write_tokens=25_000,
+        context_tokens=375_000,
+    )
+    assert cost == pytest.approx(1.3)
 
 
 def test_canonical_model_keys_match_converter_style() -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 import re
 
@@ -32,13 +32,21 @@ class CanonicalMetrics:
     tool_rows: list[dict[str, Any]]
     mcp_rows: list[dict[str, Any]]
     per_model_costs: list[dict[str, Any]]
+    warnings: list[str] = field(default_factory=list)
 
 
-def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> CanonicalMetrics:
+def build_canonical_metrics(
+    session_id: str,
+    messages: list[dict[str, Any]],
+    *,
+    session_info: dict[str, Any] | None = None,
+) -> CanonicalMetrics:
     telemetry_calls = collect_telemetry_calls(messages)
     telemetry = summarize_telemetry(telemetry_calls)
     attribution = collect_content_attribution(messages)
     model = _detect_model(messages)
+    warnings = list(attribution.warnings)
+    warnings.extend(_collect_session_warnings(session_id, telemetry, session_info))
 
     pricing_lookup = build_default_pricing_lookup()
     estimated_session_cost = _estimate_session_cost_per_call(
@@ -87,7 +95,7 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
                 "component_group": sgroup,
                 "component_name": sname,
                 "tokens": row["tokens"],
-                "estimated_session_tokens": row["tokens"] * telemetry.api_calls,
+                "estimated_session_tokens": row["tokens"],
                 "calls": 0,
             }
         )
@@ -100,7 +108,7 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
                 "component_group": sgroup,
                 "component_name": sname,
                 "tokens": row["tokens"],
-                "estimated_session_tokens": row["tokens"] * telemetry.api_calls,
+                "estimated_session_tokens": row["tokens"],
                 "calls": 0,
             }
         )
@@ -137,6 +145,7 @@ def build_canonical_metrics(session_id: str, messages: list[dict[str, Any]]) -> 
         tool_rows=tool_rows,
         mcp_rows=mcp_rows,
         per_model_costs=per_model_costs,
+        warnings=warnings,
     )
 
 
@@ -286,6 +295,99 @@ def _is_local_model(model: str) -> bool:
         if fnmatch.fnmatch(model.lower(), pattern.lower()):
             return True
     return False
+
+
+def _collect_session_warnings(
+    session_id: str,
+    telemetry: Any,
+    session_info: dict[str, Any] | None,
+) -> list[str]:
+    if not isinstance(session_info, dict):
+        return []
+
+    warnings: list[str] = []
+    aggregate = _extract_session_aggregate(session_info)
+    if aggregate is not None:
+        token_mismatch = (
+            aggregate["input"] != telemetry.input_tokens
+            or aggregate["output"] != telemetry.output_tokens
+            or aggregate["reasoning"] != telemetry.reasoning_tokens
+            or aggregate["cache_read"] != telemetry.cache_read_tokens
+            or aggregate["cache_write"] != telemetry.cache_write_tokens
+        )
+        cost_mismatch = abs(aggregate["cost"] - telemetry.total_cost) > 1e-9
+        if token_mismatch or cost_mismatch:
+            aggregate_total = (
+                aggregate["input"]
+                + aggregate["output"]
+                + aggregate["reasoning"]
+                + aggregate["cache_read"]
+                + aggregate["cache_write"]
+            )
+            warnings.append(
+                "session aggregate mismatch: "
+                f"messages={telemetry.total_tokens} tokens/${telemetry.total_cost:.6f}, "
+                f"session={aggregate_total} tokens/${aggregate['cost']:.6f}"
+            )
+
+    revert_message_id = _extract_revert_message_id(session_info)
+    if revert_message_id:
+        warnings.append(
+            f"session has active revert at message {revert_message_id}; retained local content may include reverted history"
+        )
+
+    return warnings
+
+
+def _extract_session_aggregate(session_info: dict[str, Any]) -> dict[str, float] | None:
+    for source in _session_info_sources(session_info):
+        tokens = source.get("tokens") if isinstance(source.get("tokens"), dict) else None
+        if not tokens:
+            continue
+        cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+        return {
+            "input": float(_safe_int(tokens.get("input"))),
+            "output": float(_safe_int(tokens.get("output"))),
+            "reasoning": float(_safe_int(tokens.get("reasoning"))),
+            "cache_read": float(_safe_int(cache.get("read"))),
+            "cache_write": float(_safe_int(cache.get("write"))),
+            "cost": _safe_float(source.get("cost")),
+        }
+    return None
+
+
+def _extract_revert_message_id(session_info: dict[str, Any]) -> str | None:
+    for source in _session_info_sources(session_info):
+        revert = source.get("revert") if isinstance(source.get("revert"), dict) else None
+        if not revert:
+            continue
+        message_id = revert.get("messageID") or revert.get("messageId") or revert.get("message_id")
+        if isinstance(message_id, str) and message_id.strip():
+            return message_id.strip()
+    return None
+
+
+def _session_info_sources(session_info: dict[str, Any]) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = [session_info]
+    for key in ("data", "info", "session"):
+        value = session_info.get(key)
+        if isinstance(value, dict):
+            sources.append(value)
+    return sources
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return max(0.0, float(value or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _component_group(name: str) -> str:

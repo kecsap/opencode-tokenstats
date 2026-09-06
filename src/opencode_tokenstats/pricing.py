@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
 import fnmatch
+import re
 
 
 def load_model_aliases(file_path: str | None = None) -> dict[str, str]:
@@ -137,6 +138,7 @@ class ModelPricing:
     cache_write: float = 0.0
     web_search: float = 0.0
     fast_multiplier: float = 1.0
+    tiers: tuple["ContextPricing", ...] = field(default_factory=tuple)
     context_over_200k: "ContextPricing | None" = None
 
 
@@ -207,7 +209,12 @@ class PricingLookup:
 
         for key, pricing in self.pricing_data.items():
             key_l = key.lower()
-            if model_name.startswith(key_l) and len(key_l) > best_len:
+            if not model_name.startswith(key_l):
+                continue
+            suffix = model_name[len(key_l):]
+            if suffix and not re.match(r"^[-.:/@_]", suffix):
+                continue
+            if len(key_l) > best_len:
                 best_len = len(key_l)
                 best = pricing
 
@@ -241,21 +248,32 @@ def estimate_session_cost_usd(
 
 
 def _select_pricing_rate(pricing: ModelPricing, context_tokens: int | None) -> ModelPricing:
-    tier = pricing.context_over_200k
-    if tier is None:
-        return pricing
     if context_tokens is None:
         return pricing
-    threshold = tier.threshold or 200_000
-    if context_tokens > threshold:
+
+    matched_tier: ContextPricing | None = None
+    for tier in sorted(pricing.tiers, key=lambda item: item.threshold):
+        threshold = tier.threshold or 0
+        if context_tokens > threshold:
+            matched_tier = tier
+
+    if matched_tier is None:
+        tier = pricing.context_over_200k
+        if tier is not None:
+            threshold = tier.threshold or 200_000
+            if context_tokens > threshold:
+                matched_tier = tier
+
+    if matched_tier is not None:
         return ModelPricing(
-            input=tier.input,
-            output=tier.output,
-            cache_read=tier.cache_read,
-            cache_write=tier.cache_write,
+            input=matched_tier.input,
+            output=matched_tier.output,
+            cache_read=matched_tier.cache_read,
+            cache_write=matched_tier.cache_write,
             web_search=pricing.web_search,
             fast_multiplier=pricing.fast_multiplier,
-            context_over_200k=tier,
+            tiers=pricing.tiers,
+            context_over_200k=pricing.context_over_200k,
         )
     return pricing
 
@@ -298,6 +316,7 @@ def load_pricing_lookup() -> PricingLookup:
             for key, val in payload.items():
                 if not isinstance(key, str) or not isinstance(val, dict):
                     continue
+                tiers = _parse_context_tiers(val.get("tiers"))
                 context_over_200k = _parse_context_pricing(val.get("contextOver200k") or val.get("context_over_200k"))
                 data[key.lower()] = ModelPricing(
                     input=float(val.get("input", 0) or 0),
@@ -306,6 +325,7 @@ def load_pricing_lookup() -> PricingLookup:
                     cache_write=float(val.get("cacheWrite", val.get("cache_write", 0)) or 0),
                     web_search=float(val.get("webSearch", val.get("web_search", 0)) or 0),
                     fast_multiplier=float(val.get("fastMultiplier", val.get("fast_multiplier", 1)) or 1),
+                    tiers=tiers,
                     context_over_200k=context_over_200k,
                 )
             data.setdefault("default", ModelPricing(input=1.0, output=3.0, cache_read=0.0, cache_write=0.0, web_search=0.0, fast_multiplier=1.0))
@@ -330,3 +350,17 @@ def _parse_context_pricing(value: object) -> ContextPricing | None:
         cache_write=float(value.get("cacheWrite", value.get("cache_write", 0)) or 0),
         threshold=threshold,
     )
+
+
+def _parse_context_tiers(value: object) -> tuple[ContextPricing, ...]:
+    if not isinstance(value, list):
+        return ()
+
+    tiers: list[ContextPricing] = []
+    for item in value:
+        tier = _parse_context_pricing(item)
+        if tier is not None:
+            tiers.append(tier)
+
+    tiers.sort(key=lambda item: item.threshold)
+    return tuple(tiers)
