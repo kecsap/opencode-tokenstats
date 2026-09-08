@@ -325,5 +325,5 @@ def test_max_ext_tools_option_is_accepted(monkeypatch) -> None:
     assert result.exit_code == 0
 
 
-def test_max_ext_tools_helper_defaults_to_20() -> None:
-    assert cli._max_ext_tools({}) == 20
+def test_max_ext_tools_helper_defaults_to_24() -> None:
+    assert cli._max_ext_tools({}) == 24

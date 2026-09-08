@@ -86,7 +86,7 @@ class OrderedCommandsGroup(click.Group):
 @click.option("-sf", "--session-filter", default=None, help="Comma-separated list of project root dir names to filter sessions by")
 @click.option("-esl", "--export-session-list", default=None, help="Export selected session IDs to file (one per line)")
 @click.option("-o", "--session-output-dir", default=None, help="Export selected session transcripts to a directory")
-@click.option("--max-ext-tools", default=20, show_default=True, type=click.IntRange(1, None), help="Max external tools to include in External Tools panels")
+@click.option("--max-ext-tools", default=24, show_default=True, type=click.IntRange(1, None), help="Max external tools to include in External Tools panels")
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -629,7 +629,9 @@ def _build_period_report(
     component_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
     core_map: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0.0, "calls": 0.0})
     aliases = load_model_aliases(options.get("model_alias_file"))
-    model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0})
+    model_map: dict[str, dict[str, float]] = defaultdict(
+        lambda: {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0.0, "input_tokens": 0.0, "output_tokens": 0.0, "reasoning_tokens": 0.0, "generated_tokens": 0.0}
+    )
 
     # Activity aggregation maps
     activity_map: dict[str, dict[str, object]] = {}
@@ -662,12 +664,29 @@ def _build_period_report(
             model_map[model_key]["api_cost"] += float(model_row["api_cost"])
             model_map[model_key]["estimated_cost"] += float(model_row["estimated_cost"])
             model_map[model_key]["tokens"] += int(model_row["tokens"])
+            model_map[model_key]["input_tokens"] += int(model_row.get("input_tokens", 0))
+            model_map[model_key]["output_tokens"] += int(model_row.get("output_tokens", 0))
+            model_map[model_key]["reasoning_tokens"] += int(model_row.get("reasoning_tokens", 0))
+            model_map[model_key]["generated_tokens"] += int(model_row.get("generated_tokens", 0))
 
         # Classify session and aggregate by activity
         category = classify_session(canonical)
         if category not in activity_map:
-            activity_map[category] = {"tokens": 0, "calls": 0, "api_cost": 0.0, "estimated_cost": 0.0}
+            activity_map[category] = {
+                "tokens": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "generated_tokens": 0,
+                "calls": 0,
+                "api_cost": 0.0,
+                "estimated_cost": 0.0,
+            }
         activity_map[category]["tokens"] += canonical.session_total_tokens
+        activity_map[category]["input_tokens"] += canonical.input_tokens
+        activity_map[category]["output_tokens"] += canonical.output_tokens
+        activity_map[category]["reasoning_tokens"] += canonical.reasoning_tokens
+        activity_map[category]["generated_tokens"] += canonical.output_tokens + canonical.reasoning_tokens
         activity_map[category]["calls"] += canonical.api_calls
         activity_map[category]["api_cost"] += canonical.actual_cost_usd
         activity_map[category]["estimated_cost"] += canonical.estimated_cost_usd
@@ -679,6 +698,10 @@ def _build_period_report(
             {
                 "root_dir": root_dir,
                 "tokens": canonical.session_total_tokens,
+                "input_tokens": canonical.input_tokens,
+                "output_tokens": canonical.output_tokens,
+                "reasoning_tokens": canonical.reasoning_tokens,
+                "generated_tokens": canonical.output_tokens + canonical.reasoning_tokens,
                 "api_cost": round(canonical.actual_cost_usd, 6),
                 "estimated_cost": round(canonical.estimated_cost_usd, 6),
             }
@@ -703,6 +726,10 @@ def _build_period_report(
             "category": cat,
             "label": CATEGORY_LABELS.get(cat, cat.title()),
             "tokens": data["tokens"],
+            "input_percent": round(data["input_tokens"] / data["tokens"] * 100.0, 2) if data["tokens"] else 0.0,
+            "output_percent": round(data["output_tokens"] / data["tokens"] * 100.0, 2) if data["tokens"] else 0.0,
+            "reasoning_tokens": data["reasoning_tokens"],
+            "reasoning_percent": round(data["reasoning_tokens"] / data["generated_tokens"] * 100.0, 2) if data["generated_tokens"] else 0.0,
             "calls": data["calls"],
             "api_cost": round(data["api_cost"], 6),
             "estimated_cost": round(data["estimated_cost"], 6),
@@ -716,14 +743,31 @@ def _build_period_report(
     for row in session_rows:
         rd = row["root_dir"]
         if rd not in dir_map:
-            dir_map[rd] = {"root_dir": rd, "tokens": 0, "api_cost": 0.0, "estimated_cost": 0.0}
+            dir_map[rd] = {
+                "root_dir": rd,
+                "tokens": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "generated_tokens": 0,
+                "api_cost": 0.0,
+                "estimated_cost": 0.0,
+            }
         dir_map[rd]["tokens"] += row["tokens"]
+        dir_map[rd]["input_tokens"] += row["input_tokens"]
+        dir_map[rd]["output_tokens"] += row["output_tokens"]
+        dir_map[rd]["reasoning_tokens"] += row["reasoning_tokens"]
+        dir_map[rd]["generated_tokens"] += row["generated_tokens"]
         dir_map[rd]["api_cost"] += row["api_cost"]
         dir_map[rd]["estimated_cost"] += row["estimated_cost"]
     top_sessions = [
         {
             "root_dir": rd,
             "tokens": data["tokens"],
+            "input_percent": round(data["input_tokens"] / data["tokens"] * 100.0, 2) if data["tokens"] else 0.0,
+            "output_percent": round(data["output_tokens"] / data["tokens"] * 100.0, 2) if data["tokens"] else 0.0,
+            "reasoning_tokens": data["reasoning_tokens"],
+            "reasoning_percent": round(data["reasoning_tokens"] / data["generated_tokens"] * 100.0, 2) if data["generated_tokens"] else 0.0,
             "api_cost": round(data["api_cost"], 6),
             "estimated_cost": round(data["estimated_cost"], 6),
         }
@@ -1096,7 +1140,7 @@ def _month_window(month_arg: str) -> tuple[datetime, datetime]:
 
 
 _LOCAL_TOOL_RE = re.compile(r"^(read|bash|glob|todowrite|task|tokenscope|apply_patch|skill)$")
-_TOP_TOOLS_LIMIT = 20
+_TOP_TOOLS_LIMIT = 24
 
 
 def _max_ext_tools(options: dict[str, object]) -> int:
@@ -1334,12 +1378,18 @@ def _build_model_costs_from_messages(messages: list[dict[str, object]]) -> list[
 def _accumulate_model_cost_rows(
     model_rows: list[dict[str, object]], aliases: dict[str, str]
 ) -> dict[str, dict[str, float]]:
-    model_map: dict[str, dict[str, float]] = defaultdict(lambda: {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0.0})
+    model_map: dict[str, dict[str, float]] = defaultdict(
+        lambda: {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0.0, "input_tokens": 0.0, "output_tokens": 0.0, "reasoning_tokens": 0.0, "generated_tokens": 0.0}
+    )
     for row in model_rows:
         model_id = resolve_alias(str(row.get("model", "unknown")), aliases)
         model_map[model_id]["api_cost"] += float(row.get("api_cost", 0.0))
         model_map[model_id]["estimated_cost"] += float(row.get("estimated_cost", 0.0))
         model_map[model_id]["tokens"] += float(row.get("tokens", 0.0))
+        model_map[model_id]["input_tokens"] += float(row.get("input_tokens", 0.0))
+        model_map[model_id]["output_tokens"] += float(row.get("output_tokens", 0.0))
+        model_map[model_id]["reasoning_tokens"] += float(row.get("reasoning_tokens", 0.0))
+        model_map[model_id]["generated_tokens"] += float(row.get("generated_tokens", 0.0))
     return model_map
 
 
@@ -1352,10 +1402,18 @@ def _finalize_model_costs(model_map: dict[str, dict[str, float]]) -> list[dict[s
             estimated_cost = 0.0
         primary_cost = api_cost if api_cost > 0 else estimated_cost
         tokens = int(costs.get("tokens", 0))
+        input_tokens = int(costs.get("input_tokens", 0))
+        output_tokens = int(costs.get("output_tokens", 0))
+        reasoning_tokens = int(costs.get("reasoning_tokens", 0))
+        generated_tokens = int(costs.get("generated_tokens", 0))
         rows.append(
             {
                 "model": model,
                 "tokens": tokens,
+                "input_percent": round(input_tokens / tokens * 100.0, 2) if tokens else 0.0,
+                "output_percent": round(output_tokens / tokens * 100.0, 2) if tokens else 0.0,
+                "reasoning_tokens": reasoning_tokens,
+                "reasoning_percent": round(reasoning_tokens / generated_tokens * 100.0, 2) if generated_tokens else 0.0,
                 "api_cost": round(api_cost, 6),
                 "estimated_cost": round(estimated_cost, 6),
                 "cost": round(primary_cost, 6),
@@ -1365,7 +1423,7 @@ def _finalize_model_costs(model_map: dict[str, dict[str, float]]) -> list[dict[s
         key=lambda x: (float(x["api_cost"]), float(x["estimated_cost"])),
         reverse=True,
     )
-    return rows[:10]
+    return rows[:15]
 
 
 if __name__ == "__main__":

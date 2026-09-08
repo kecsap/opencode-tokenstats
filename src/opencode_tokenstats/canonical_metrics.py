@@ -202,6 +202,8 @@ def _build_per_model_costs(
 ) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for call in calls:
+        if call.total_tokens == 0 and call.cost == 0:
+            continue
         model_name = PricingLookup.build_lookup_key(call.provider_id, call.model_id)
         if not model_name:
             model_name = fallback_model
@@ -223,11 +225,19 @@ def _build_per_model_costs(
             row = {
                 "model": model_name,
                 "tokens": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "generated_tokens": 0,
                 "api_cost": 0.0,
                 "estimated_cost": 0.0,
             }
             grouped[model_name] = row
         row["tokens"] += call.input_tokens + call.output_tokens + call.reasoning_tokens + call.cache_read_tokens + call.cache_write_tokens
+        row["input_tokens"] += call.input_tokens
+        row["output_tokens"] += call.output_tokens
+        row["reasoning_tokens"] += call.reasoning_tokens
+        row["generated_tokens"] += call.output_tokens + call.reasoning_tokens
         row["api_cost"] += api_cost
         row["estimated_cost"] += estimated_cost
 
@@ -237,10 +247,22 @@ def _build_per_model_costs(
         estimated_cost = float(row["estimated_cost"])
         model_name = str(row["model"])
         primary_cost = api_cost if api_cost > 0 else estimated_cost
+        tokens = int(row["tokens"])
+        input_tokens = int(row["input_tokens"])
+        output_tokens = int(row["output_tokens"])
+        reasoning_tokens = int(row["reasoning_tokens"])
+        generated_tokens = int(row["generated_tokens"])
         rows.append(
             {
                 "model": model_name,
-                "tokens": int(row["tokens"]),
+                "tokens": tokens,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "input_percent": round(input_tokens / tokens * 100.0, 2) if tokens else 0.0,
+                "output_percent": round(output_tokens / tokens * 100.0, 2) if tokens else 0.0,
+                "reasoning_tokens": reasoning_tokens,
+                "generated_tokens": generated_tokens,
+                "reasoning_percent": round(reasoning_tokens / generated_tokens * 100.0, 2) if generated_tokens else 0.0,
                 "api_cost": round(api_cost, 6),
                 "estimated_cost": round(estimated_cost if api_cost <= 0 else 0.0, 6),
                 "cost": round(primary_cost, 6),

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 try:
-    from rich.console import Console, Group
+    from rich.console import Console
     from rich.columns import Columns
     from rich.panel import Panel
     from rich.table import Table
@@ -33,7 +33,7 @@ COL_REASONING = COL_PURPLE
 COL_CACHE_READ = COL_YELLOW
 COL_TOTAL = COL_ORANGE
 
-TOP_TOOLS_CHUNK_SIZE = 10
+TOP_TOOLS_CHUNK_SIZE = 8
 
 
 def _fmt_int(value: Any) -> str:
@@ -250,17 +250,29 @@ def print_session_report(
         mt.add_column("", style="bold", justify="left")
         mt.add_column("", justify="left")
         mt.add_column("Tokens", justify="right")
+        mt.add_column("Input (%)", justify="center")
+        mt.add_column("Output (%)", justify="center")
+        mt.add_column("Reasoning (%)", justify="center")
         mt.add_column("API", justify="right")
         mt.add_column("Est.", justify="right")
         max_cost = max((float(item.get("api_cost", 0)) or float(item.get("estimated_cost", 0)) for item in model_costs), default=1) or 1
-        for item in model_costs[:13]:
+        shown_models = model_costs[:15]
+        has_api_costs = any(float(item.get("api_cost", 0)) > 0 for item in shown_models)
+        separator_added = False
+        for item in shown_models:
             api_cost = float(item.get("api_cost", 0))
+            if has_api_costs and not api_cost and not separator_added:
+                mt.add_row(*[Text("─" * 6, style=COL_DIM) for _ in range(8)])
+                separator_added = True
             primary_cost = api_cost or float(item.get("estimated_cost", 0))
             bar_text = _color_bar(primary_cost, max_cost, COL_GREEN, width=6)
             mt.add_row(
                 str(item.get("model")),
                 bar_text,
                 _fmt_int(item.get("tokens", 0)),
+                f"{float(item.get('input_percent', 0)):.2f}",
+                f"{float(item.get('output_percent', 0)):.2f}",
+                f"{float(item.get('reasoning_percent', 0)):.2f}",
                 _fmt_float(api_cost),
                 _fmt_float(item.get("estimated_cost")),
             )
@@ -392,17 +404,29 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         mt.add_column("", style="bold", justify="left")
         mt.add_column("", justify="left")
         mt.add_column("Tokens", justify="right")
+        mt.add_column("Input (%)", justify="center")
+        mt.add_column("Output (%)", justify="center")
+        mt.add_column("Reasoning (%)", justify="center")
         mt.add_column("API", justify="right")
         mt.add_column("Est.", justify="right")
         max_cost = max((float(item.get("api_cost", 0)) or float(item.get("estimated_cost", 0)) for item in model_costs), default=1) or 1
-        for item in model_costs[:13]:
+        shown_models = model_costs[:15]
+        has_api_costs = any(float(item.get("api_cost", 0)) > 0 for item in shown_models)
+        separator_added = False
+        for item in shown_models:
             api_cost = float(item.get("api_cost", 0))
+            if has_api_costs and not api_cost and not separator_added:
+                mt.add_row(*[Text("─" * 6, style=COL_DIM) for _ in range(8)])
+                separator_added = True
             primary_cost = api_cost or float(item.get("estimated_cost", 0))
             bar_text = _color_bar(primary_cost, max_cost, COL_GREEN, width=6)
             mt.add_row(
                 str(item.get("model")),
                 bar_text,
                 _fmt_int(item.get("tokens", 0)),
+                f"{float(item.get('input_percent', 0)):.2f}",
+                f"{float(item.get('output_percent', 0)):.2f}",
+                f"{float(item.get('reasoning_percent', 0)):.2f}",
                 _fmt_float(api_cost),
                 _fmt_float(item.get("estimated_cost")),
             )
@@ -419,6 +443,9 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         act.add_column("", justify="left")
         act.add_column("Tokens", justify="right")
         act.add_column("%", justify="right")
+        act.add_column("Input (%)", justify="center")
+        act.add_column("Output (%)", justify="center")
+        act.add_column("Reasoning (%)", justify="center")
         act.add_column("Calls", justify="right")
         act.add_column("API", justify="right")
         act.add_column("Est.", justify="right")
@@ -434,6 +461,9 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 bar_text,
                 _fmt_int(tokens),
                 f"{pct:.1f}",
+                f"{float(row.get('input_percent', 0)):.2f}",
+                f"{float(row.get('output_percent', 0)):.2f}",
+                f"{float(row.get('reasoning_percent', 0)):.2f}",
                 _fmt_int(row.get("calls", 0)),
                 _fmt_float(row.get("api_cost", 0)),
                 _fmt_float(row.get("estimated_cost", 0)),
@@ -449,6 +479,9 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         ts.add_column("", justify="left")
         ts.add_column("Tokens", justify="right")
         ts.add_column("%", justify="right")
+        ts.add_column("Input (%)", justify="center")
+        ts.add_column("Output (%)", justify="center")
+        ts.add_column("Reasoning (%)", justify="center")
         ts.add_column("API", justify="right")
         ts.add_column("Est.", justify="right")
         sess_rows = sorted(top_sessions, key=lambda x: int(x.get("tokens", 0)), reverse=True)[:10]
@@ -463,6 +496,9 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 bar_text,
                 _fmt_int(tokens),
                 f"{pct:.1f}",
+                f"{float(row.get('input_percent', 0)):.2f}",
+                f"{float(row.get('output_percent', 0)):.2f}",
+                f"{float(row.get('reasoning_percent', 0)):.2f}",
                 _fmt_float(row.get("api_cost", 0)),
                 _fmt_float(row.get("estimated_cost", 0)),
             )
@@ -476,20 +512,15 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
 
     summary_panel = Panel(summary_table, title="[bold]Period Summary[/bold]", border_style=COL_MAGENTA)
     comp_panel = Panel(comp_table, title="[bold]Token Composition[/bold]", border_style=COL_BLUE)
-    left_group = Group(summary_panel, comp_panel)
 
-    # Layout: left column (Summary + Composition) | Model Costs | Top Sessions | Session Categories
-    right_side = []
-    if model_costs_panel:
-        right_side.append(model_costs_panel)
-    if top_sess_panel:
-        right_side.append(top_sess_panel)
+    first_row = [summary_panel, comp_panel]
     if act_panel:
-        right_side.append(act_panel)
-    if right_side:
-        console.print(Columns([left_group] + right_side, equal=False, padding=0))
-    else:
-        console.print(left_group)
+        first_row.append(act_panel)
+    console.print(Columns(first_row, equal=False, padding=0))
+
+    second_row = [panel for panel in (model_costs_panel, top_sess_panel) if panel]
+    if second_row:
+        console.print(Columns(second_row, equal=False, padding=0))
 
     mcp_stats = report.get("mcp_stats")
     core_stats = report.get("core_stats")

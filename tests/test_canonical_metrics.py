@@ -299,6 +299,36 @@ def test_per_model_costs_keep_api_only_for_trusted_billed_model_rows() -> None:
     assert model_rows["openai/gpt-5.4"]["cost"] == 12.34
 
 
+def test_per_model_costs_exclude_zero_usage_plugin_calls() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "providerID": "magic-context",
+                "modelID": "magic-context",
+                "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.0,
+            },
+            "parts": [{"type": "text", "text": "plugin"}],
+        },
+        {
+            "role": "assistant",
+            "info": {
+                "providerID": "llamacpp-plant",
+                "modelID": "qwen3.8-27b",
+                "tokens": {"input": 100, "output": 10, "reasoning": 5, "cache": {"read": 0, "write": 0}},
+                "cost": 0.0,
+            },
+            "parts": [{"type": "text", "text": "model"}],
+        },
+    ]
+
+    out = build_canonical_metrics("s-plugin", messages)
+
+    assert [row["model"] for row in out.per_model_costs] == ["llamacpp-plant/qwen3.8-27b"]
+    assert out.per_model_costs[0]["reasoning_percent"] == 33.33
+
+
 def test_build_canonical_metrics_adds_session_aggregate_and_revert_warnings() -> None:
     messages = [
         {

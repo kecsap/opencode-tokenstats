@@ -42,7 +42,7 @@ def _metric() -> CanonicalMetrics:
         core_rows=[],
         tool_rows=[{"tool": "lean-ctx_ctx_search", "tokens": 4, "percent": 100.0, "calls": 2}],
         mcp_rows=[{"name": "lean", "tokens": 4, "calls": 2, "tokens_per_call": 2.0, "percent": 100.0}],
-        per_model_costs=[{"model": "gpt-5.3-codex", "tokens": 19, "api_cost": 0.01, "estimated_cost": 0.0, "cost": 0.01}],
+        per_model_costs=[{"model": "gpt-5.3-codex", "tokens": 19, "input_tokens": 10, "output_tokens": 5, "reasoning_tokens": 1, "generated_tokens": 6, "reasoning_percent": 16.67, "api_cost": 0.01, "estimated_cost": 0.0, "cost": 0.01}],
     )
 
 
@@ -90,6 +90,27 @@ def test_model_costs_use_api_when_model_row_has_trusted_billed_cost() -> None:
     assert model["estimated_cost"] == 0.0
     assert model["cost"] == 0.01
     assert model["tokens"] == 19
+    assert model["input_percent"] == 52.63
+    assert model["output_percent"] == 26.32
+    assert model["reasoning_tokens"] == 1
+    assert model["reasoning_percent"] == 16.67
+
+
+def test_reasoning_stats_are_in_activity_and_session_rows() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 2, tzinfo=UTC)
+    report = build_report_schema(period="daily", mode="local", start=start, end=end, session_metrics=[_metric()])
+
+    activity = report["by_activity"][0]
+    session = report["top_sessions"][0]
+    assert activity["reasoning_tokens"] == 1
+    assert activity["input_percent"] == 52.63
+    assert activity["output_percent"] == 26.32
+    assert activity["reasoning_percent"] == 16.67
+    assert session["reasoning_tokens"] == 1
+    assert session["input_percent"] == 52.63
+    assert session["output_percent"] == 26.32
+    assert session["reasoning_percent"] == 16.67
 
 
 def test_model_costs_uses_estimated_when_no_api() -> None:
@@ -125,6 +146,7 @@ def test_model_costs_uses_estimated_when_no_api() -> None:
     assert model["api_cost"] == 0.0
     assert model["estimated_cost"] == 0.05
     assert model["cost"] == 0.05
+    assert model["reasoning_tokens"] == 0
 
 
 def test_model_costs_merge_same_model_into_one_api_row_when_any_billed_cost_exists() -> None:
@@ -162,6 +184,8 @@ def test_model_costs_merge_same_model_into_one_api_row_when_any_billed_cost_exis
     assert model["estimated_cost"] == 0.0
     assert model["cost"] == 0.01
     assert model["tokens"] == 38
+    assert model["reasoning_tokens"] == 1
+    assert model["reasoning_percent"] == 2.63
 
 
 def test_model_costs_use_estimated_for_unbilled_model_rows_in_mixed_sessions() -> None:

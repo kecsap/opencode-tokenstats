@@ -63,18 +63,42 @@ def build_report_schema(
             for row in per_model_costs:
                 model_key = resolve_alias(str(row.get("model", m.model)), aliases)
                 if model_key not in models:
-                    models[model_key] = {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0}
+                    models[model_key] = {
+                        "api_cost": 0.0,
+                        "estimated_cost": 0.0,
+                        "tokens": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "reasoning_tokens": 0,
+                        "generated_tokens": 0,
+                    }
                 models[model_key]["api_cost"] = round(models[model_key]["api_cost"] + float(row.get("api_cost", 0.0)), 6)
                 models[model_key]["estimated_cost"] = round(
                     models[model_key]["estimated_cost"] + float(row.get("estimated_cost", 0.0)), 6
                 )
                 models[model_key]["tokens"] += int(row.get("tokens", 0))
+                models[model_key]["input_tokens"] += int(row.get("input_tokens", 0))
+                models[model_key]["output_tokens"] += int(row.get("output_tokens", 0))
+                models[model_key]["reasoning_tokens"] += int(row.get("reasoning_tokens", 0))
+                models[model_key]["generated_tokens"] += int(row.get("generated_tokens", 0))
         else:
             model_key = resolve_alias(m.model, aliases)
             if model_key not in models:
-                models[model_key] = {"api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0}
+                models[model_key] = {
+                    "api_cost": 0.0,
+                    "estimated_cost": 0.0,
+                    "tokens": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "generated_tokens": 0,
+                }
             models[model_key]["estimated_cost"] = round(models[model_key]["estimated_cost"] + m.estimated_cost_usd, 6)
             models[model_key]["tokens"] += m.session_total_tokens
+            models[model_key]["input_tokens"] += m.input_tokens
+            models[model_key]["output_tokens"] += m.output_tokens
+            models[model_key]["reasoning_tokens"] += m.reasoning_tokens
+            models[model_key]["generated_tokens"] += m.output_tokens + m.reasoning_tokens
 
         for row in m.tool_rows:
             name = str(row["tool"])
@@ -107,10 +131,18 @@ def build_report_schema(
             estimated_cost = 0.0
         primary_cost = api_cost if api_cost > 0 else estimated_cost
         tokens = int(costs["tokens"])
+        input_tokens = int(costs["input_tokens"])
+        output_tokens = int(costs["output_tokens"])
+        reasoning_tokens = int(costs["reasoning_tokens"])
+        generated_tokens = int(costs["generated_tokens"])
         model_rows.append(
             {
                 "model": k,
                 "tokens": tokens,
+                "input_percent": round(input_tokens / tokens * 100.0, 2) if tokens else 0.0,
+                "output_percent": round(output_tokens / tokens * 100.0, 2) if tokens else 0.0,
+                "reasoning_tokens": reasoning_tokens,
+                "reasoning_percent": round(reasoning_tokens / generated_tokens * 100.0, 2) if generated_tokens else 0.0,
                 "api_cost": round(api_cost, 6),
                 "estimated_cost": round(estimated_cost, 6),
                 "cost": round(primary_cost, 6),
@@ -145,8 +177,21 @@ def build_report_schema(
     for m in session_metrics:
         category = classify_session(m)
         if category not in activity_map:
-            activity_map[category] = {"tokens": 0, "calls": 0, "api_cost": 0.0, "estimated_cost": 0.0}
+            activity_map[category] = {
+                "tokens": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "generated_tokens": 0,
+                "calls": 0,
+                "api_cost": 0.0,
+                "estimated_cost": 0.0,
+            }
         activity_map[category]["tokens"] += m.session_total_tokens
+        activity_map[category]["input_tokens"] += m.input_tokens
+        activity_map[category]["output_tokens"] += m.output_tokens
+        activity_map[category]["reasoning_tokens"] += m.reasoning_tokens
+        activity_map[category]["generated_tokens"] += m.output_tokens + m.reasoning_tokens
         activity_map[category]["calls"] += m.api_calls
         activity_map[category]["api_cost"] += m.actual_cost_usd
         activity_map[category]["estimated_cost"] += m.estimated_cost_usd
@@ -157,6 +202,10 @@ def build_report_schema(
             {
                 "root_dir": root_dir,
                 "tokens": m.session_total_tokens,
+                "input_percent": round(m.input_tokens / m.session_total_tokens * 100.0, 2) if m.session_total_tokens else 0.0,
+                "output_percent": round(m.output_tokens / m.session_total_tokens * 100.0, 2) if m.session_total_tokens else 0.0,
+                "reasoning_tokens": m.reasoning_tokens,
+                "reasoning_percent": round(m.reasoning_tokens / (m.output_tokens + m.reasoning_tokens) * 100.0, 2) if m.output_tokens + m.reasoning_tokens else 0.0,
                 "api_cost": round(m.actual_cost_usd, 6),
                 "estimated_cost": round(m.estimated_cost_usd, 6),
             }
@@ -167,6 +216,10 @@ def build_report_schema(
             "category": cat,
             "label": CATEGORY_LABELS.get(cat, cat.title()),
             "tokens": data["tokens"],
+            "input_percent": round(data["input_tokens"] / data["tokens"] * 100.0, 2) if data["tokens"] else 0.0,
+            "output_percent": round(data["output_tokens"] / data["tokens"] * 100.0, 2) if data["tokens"] else 0.0,
+            "reasoning_tokens": data["reasoning_tokens"],
+            "reasoning_percent": round(data["reasoning_tokens"] / data["generated_tokens"] * 100.0, 2) if data["generated_tokens"] else 0.0,
             "calls": data["calls"],
             "api_cost": round(data["api_cost"], 6),
             "estimated_cost": round(data["estimated_cost"], 6),
