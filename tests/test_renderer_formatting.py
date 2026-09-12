@@ -79,5 +79,5 @@ def test_period_report_includes_by_activity_and_top_sessions(monkeypatch, capsys
     )
 
     out = capsys.readouterr().out
-    assert "Session Categories" in out
+    assert "Activity by Turn" in out
     assert "Top Sessions" in out

@@ -4,6 +4,7 @@ import pytest
 
 from opencode_tokenstats.activity_classifier import (
     CATEGORY_LABELS,
+    classify_turn,
     classify_session,
     extract_root_dir,
 )
@@ -120,6 +121,25 @@ class TestClassifySession:
             [{"tool": "skill", "tokens": 50, "calls": 1, "is_skill": False, "is_subagent": False, "is_core": True}]
         )
         assert classify_session(canonical) == "general"
+
+
+class TestClassifyTurn:
+    def test_edit_turn_stays_feature_when_prompt_mentions_git(self) -> None:
+        # Git activity outside OpenCode is intentionally irrelevant. Even an
+        # OpenCode prompt that mentions a later commit remains edit-family work.
+        assert classify_turn("add the setting, then commit it", {"edit"}) == "feature"
+
+    def test_bash_only_git_turn_is_git_ops(self) -> None:
+        assert classify_turn("git rebase the feature branch", {"bash"}) == "git"
+
+    def test_bash_only_test_turn_is_testing(self) -> None:
+        assert classify_turn("run pytest for the auth module", {"bash"}) == "testing"
+
+    def test_mcp_turn_is_exploration(self) -> None:
+        assert classify_turn("inspect the API docs", {"mcp__context7__query-docs"}) == "exploration"
+
+    def test_chat_only_prompt_uses_keywords(self) -> None:
+        assert classify_turn("brainstorm an approach for caching", set()) == "brainstorming"
 
     def test_mcp_tools_yield_general(self) -> None:
         canonical = _make_canonical(

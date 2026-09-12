@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from opencode_tokenstats.canonical_metrics import CanonicalMetrics
@@ -111,6 +112,25 @@ def test_reasoning_stats_are_in_activity_and_session_rows() -> None:
     assert session["input_percent"] == 52.63
     assert session["output_percent"] == 26.32
     assert session["reasoning_percent"] == 16.67
+
+
+def test_activity_rows_are_aggregated_by_turn_category() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 2, tzinfo=UTC)
+    metric = replace(
+        _metric(),
+        api_calls=2,
+        activity_rows=[
+            {"category": "exploration", "tokens": 7, "input_tokens": 5, "output_tokens": 2, "reasoning_tokens": 0, "generated_tokens": 2, "calls": 1, "api_cost": 0.004, "estimated_cost": 0.0},
+            {"category": "feature", "tokens": 12, "input_tokens": 5, "output_tokens": 3, "reasoning_tokens": 1, "generated_tokens": 4, "calls": 1, "api_cost": 0.006, "estimated_cost": 0.0},
+        ],
+    )
+
+    report = build_report_schema(period="daily", mode="local", start=start, end=end, session_metrics=[metric])
+
+    assert {row["category"] for row in report["by_activity"]} == {"exploration", "feature"}
+    assert sum(row["tokens"] for row in report["by_activity"]) == 19
+    assert sum(row["calls"] for row in report["by_activity"]) == 2
 
 
 def test_model_costs_uses_estimated_when_no_api() -> None:

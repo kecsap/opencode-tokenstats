@@ -171,30 +171,39 @@ def build_report_schema(
         }
     ]
 
-    # Build by_activity rows (session-level classification)
+    # Build by_activity rows from turn-level attribution. Keep the public field
+    # name for JSON compatibility with earlier reports.
     activity_map: dict[str, dict[str, object]] = {}
     session_rows: list[dict[str, object]] = []
     for m in session_metrics:
-        category = classify_session(m)
-        if category not in activity_map:
-            activity_map[category] = {
-                "tokens": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "reasoning_tokens": 0,
-                "generated_tokens": 0,
-                "calls": 0,
-                "api_cost": 0.0,
-                "estimated_cost": 0.0,
-            }
-        activity_map[category]["tokens"] += m.session_total_tokens
-        activity_map[category]["input_tokens"] += m.input_tokens
-        activity_map[category]["output_tokens"] += m.output_tokens
-        activity_map[category]["reasoning_tokens"] += m.reasoning_tokens
-        activity_map[category]["generated_tokens"] += m.output_tokens + m.reasoning_tokens
-        activity_map[category]["calls"] += m.api_calls
-        activity_map[category]["api_cost"] += m.actual_cost_usd
-        activity_map[category]["estimated_cost"] += m.estimated_cost_usd
+        activity_rows = m.activity_rows or [{
+            "category": classify_session(m),
+            "tokens": m.session_total_tokens,
+            "input_tokens": m.input_tokens,
+            "output_tokens": m.output_tokens,
+            "reasoning_tokens": m.reasoning_tokens,
+            "generated_tokens": m.output_tokens + m.reasoning_tokens,
+            "calls": m.api_calls,
+            "api_cost": m.actual_cost_usd,
+            "estimated_cost": m.estimated_cost_usd,
+        }]
+        for activity in activity_rows:
+            category = str(activity["category"])
+            if category not in activity_map:
+                activity_map[category] = {
+                    "tokens": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "generated_tokens": 0,
+                    "calls": 0,
+                    "api_cost": 0.0,
+                    "estimated_cost": 0.0,
+                }
+            for field in ("tokens", "input_tokens", "output_tokens", "reasoning_tokens", "generated_tokens", "calls"):
+                activity_map[category][field] += int(activity[field])
+            for field in ("api_cost", "estimated_cost"):
+                activity_map[category][field] += float(activity[field])
         raw_dir = (session_dirs or {}).get(m.session_id, "") if session_dirs else ""
         from .activity_classifier import extract_root_dir
         root_dir = extract_root_dir(raw_dir) if raw_dir else (m.session_id or "-")

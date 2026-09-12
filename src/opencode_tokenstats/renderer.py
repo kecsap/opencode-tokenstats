@@ -371,7 +371,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         if report.get("component_stats"):
             print(f"Components: {report['component_stats']}")
         if report.get("by_activity"):
-            print(f"Session Categories: {report['by_activity']}")
+            print(f"Activity by Turn: {report['by_activity']}")
         if report.get("top_sessions"):
             print(f"Top Sessions: {report['top_sessions']}")
         return
@@ -434,7 +434,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     else:
         model_costs_panel = None
 
-    # Build Session Categories panel
+    # Build Activity by Turn panel
     by_activity = report.get("by_activity")
     act_panel = None
     if isinstance(by_activity, list) and by_activity:
@@ -468,7 +468,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_float(row.get("api_cost", 0)),
                 _fmt_float(row.get("estimated_cost", 0)),
             )
-        act_panel = Panel(act, title="[bold]Session Categories[/bold]", border_style=COL_GREEN)
+        act_panel = Panel(act, title="[bold]Activity by Turn[/bold]", border_style=COL_GREEN)
 
     # Build Top Sessions panel
     top_sess_panel = None

@@ -669,27 +669,36 @@ def _build_period_report(
             model_map[model_key]["reasoning_tokens"] += int(model_row.get("reasoning_tokens", 0))
             model_map[model_key]["generated_tokens"] += int(model_row.get("generated_tokens", 0))
 
-        # Classify session and aggregate by activity
-        category = classify_session(canonical)
-        if category not in activity_map:
-            activity_map[category] = {
-                "tokens": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "reasoning_tokens": 0,
-                "generated_tokens": 0,
-                "calls": 0,
-                "api_cost": 0.0,
-                "estimated_cost": 0.0,
-            }
-        activity_map[category]["tokens"] += canonical.session_total_tokens
-        activity_map[category]["input_tokens"] += canonical.input_tokens
-        activity_map[category]["output_tokens"] += canonical.output_tokens
-        activity_map[category]["reasoning_tokens"] += canonical.reasoning_tokens
-        activity_map[category]["generated_tokens"] += canonical.output_tokens + canonical.reasoning_tokens
-        activity_map[category]["calls"] += canonical.api_calls
-        activity_map[category]["api_cost"] += canonical.actual_cost_usd
-        activity_map[category]["estimated_cost"] += canonical.estimated_cost_usd
+        # Attribute each assistant call to its preceding user turn. The fallback
+        # preserves compatibility with CanonicalMetrics produced before activity_rows.
+        activity_rows = canonical.activity_rows or [{
+            "category": classify_session(canonical),
+            "tokens": canonical.session_total_tokens,
+            "input_tokens": canonical.input_tokens,
+            "output_tokens": canonical.output_tokens,
+            "reasoning_tokens": canonical.reasoning_tokens,
+            "generated_tokens": canonical.output_tokens + canonical.reasoning_tokens,
+            "calls": canonical.api_calls,
+            "api_cost": canonical.actual_cost_usd,
+            "estimated_cost": canonical.estimated_cost_usd,
+        }]
+        for activity in activity_rows:
+            category = str(activity["category"])
+            if category not in activity_map:
+                activity_map[category] = {
+                    "tokens": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "generated_tokens": 0,
+                    "calls": 0,
+                    "api_cost": 0.0,
+                    "estimated_cost": 0.0,
+                }
+            for field in ("tokens", "input_tokens", "output_tokens", "reasoning_tokens", "generated_tokens", "calls"):
+                activity_map[category][field] += int(activity[field])
+            for field in ("api_cost", "estimated_cost"):
+                activity_map[category][field] += float(activity[field])
 
         # Build per-session row for top_sessions
         raw_dir = session_dirs.get(canonical.session_id, "")

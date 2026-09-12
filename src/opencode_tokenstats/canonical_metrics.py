@@ -6,7 +6,8 @@ import re
 
 from .content_attribution import collect_content_attribution
 from .cost import build_default_pricing_lookup
-from .telemetry import collect_telemetry_calls, summarize_telemetry
+from .activity_classifier import classify_turn, extract_assistant_activity, extract_user_text
+from .telemetry import TelemetryCall, collect_telemetry_calls, summarize_telemetry
 from .pricing import PricingLookup, estimate_session_cost_usd
 from .pricing import load_local_model_patterns
 
@@ -33,6 +34,7 @@ class CanonicalMetrics:
     mcp_rows: list[dict[str, Any]]
     per_model_costs: list[dict[str, Any]]
     warnings: list[str] = field(default_factory=list)
+    activity_rows: list[dict[str, Any]] = field(default_factory=list)
 
 
 def build_canonical_metrics(
@@ -49,10 +51,18 @@ def build_canonical_metrics(
     warnings.extend(_collect_session_warnings(session_id, telemetry, session_info))
 
     pricing_lookup = build_default_pricing_lookup()
+    is_local_model = _is_local_model(model)
     estimated_session_cost = _estimate_session_cost_per_call(
         telemetry_calls,
         fallback_model=model,
         pricing_lookup=pricing_lookup,
+    )
+    activity_rows = _build_activity_rows(
+        messages,
+        fallback_model=model,
+        pricing_lookup=pricing_lookup,
+        include_actual_cost=not is_local_model,
+        include_estimated_cost=not (not is_local_model and telemetry.total_cost > 0),
     )
     per_model_costs = _build_per_model_costs(telemetry_calls, fallback_model=model, pricing_lookup=pricing_lookup)
     tool_rows: list[dict[str, Any]] = []
@@ -136,8 +146,8 @@ def build_canonical_metrics(
         cache_read_tokens=telemetry.cache_read_tokens,
         session_total_tokens=telemetry.total_tokens,
         api_calls=telemetry.api_calls,
-        actual_cost_usd=0.0 if _is_local_model(model) else telemetry.total_cost,
-        estimated_cost_usd=0.0 if (not _is_local_model(model) and telemetry.total_cost > 0) else estimated_session_cost,
+        actual_cost_usd=0.0 if is_local_model else telemetry.total_cost,
+        estimated_cost_usd=0.0 if (not is_local_model and telemetry.total_cost > 0) else estimated_session_cost,
         token_composition=token_composition,
         component_rows=component_rows,
         component_family_rows=component_family_rows,
@@ -146,7 +156,78 @@ def build_canonical_metrics(
         mcp_rows=mcp_rows,
         per_model_costs=per_model_costs,
         warnings=warnings,
+        activity_rows=activity_rows,
     )
+
+
+def _build_activity_rows(
+    messages: list[dict[str, Any]],
+    *,
+    fallback_model: str,
+    pricing_lookup: PricingLookup,
+    include_actual_cost: bool,
+    include_estimated_cost: bool,
+) -> list[dict[str, Any]]:
+    """Attribute assistant telemetry to the preceding user turn.
+
+    Messages arrive chronologically from both supported sources. We retain only
+    numeric aggregates; prompt text and message objects are discarded immediately.
+    """
+    rows: list[dict[str, Any]] = []
+    prompt = ""
+    tools: set[str] = set()
+    skills: set[str] = set()
+    has_subagent = False
+    calls: list[TelemetryCall] = []
+
+    def flush() -> None:
+        nonlocal tools, skills, has_subagent, calls
+        if not calls:
+            tools = set()
+            skills = set()
+            has_subagent = False
+            return
+        category = classify_turn(prompt, tools, has_subagent=has_subagent, skills=skills)
+        input_tokens = sum(call.input_tokens for call in calls)
+        output_tokens = sum(call.output_tokens for call in calls)
+        reasoning_tokens = sum(call.reasoning_tokens for call in calls)
+        cache_read_tokens = sum(call.cache_read_tokens for call in calls)
+        cache_write_tokens = sum(call.cache_write_tokens for call in calls)
+        estimated_cost = _estimate_session_cost_per_call(
+            calls, fallback_model=fallback_model, pricing_lookup=pricing_lookup
+        ) if include_estimated_cost else 0.0
+        rows.append(
+            {
+                "category": category,
+                "tokens": input_tokens + output_tokens + reasoning_tokens + cache_read_tokens + cache_write_tokens,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "reasoning_tokens": reasoning_tokens,
+                "generated_tokens": output_tokens + reasoning_tokens,
+                "calls": len(calls),
+                "api_cost": sum(call.cost for call in calls) if include_actual_cost else 0.0,
+                "estimated_cost": estimated_cost,
+            }
+        )
+        tools = set()
+        skills = set()
+        has_subagent = False
+        calls = []
+
+    for message in messages:
+        if message.get("role") == "user":
+            flush()
+            prompt = extract_user_text(message)
+            continue
+        if message.get("role") != "assistant":
+            continue
+        message_tools, message_skills, message_has_subagent = extract_assistant_activity(message)
+        tools.update(message_tools)
+        skills.update(message_skills)
+        has_subagent = has_subagent or message_has_subagent
+        calls.extend(collect_telemetry_calls([message]))
+    flush()
+    return rows
 
 
 def _detect_model(messages: list[dict[str, Any]]) -> str:
