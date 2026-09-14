@@ -62,6 +62,7 @@ def test_build_report_schema_blocks() -> None:
         "period_series",
         "projects",
         "models",
+        "trends",
     ]:
         assert key in report
 

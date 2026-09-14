@@ -35,6 +35,7 @@ class CanonicalMetrics:
     per_model_costs: list[dict[str, Any]]
     warnings: list[str] = field(default_factory=list)
     activity_rows: list[dict[str, Any]] = field(default_factory=list)
+    trend_calls: list[TelemetryCall] = field(default_factory=list)
 
 
 def build_canonical_metrics(
@@ -157,6 +158,7 @@ def build_canonical_metrics(
         per_model_costs=per_model_costs,
         warnings=warnings,
         activity_rows=activity_rows,
+        trend_calls=telemetry_calls,
     )
 
 
@@ -199,7 +201,7 @@ def _build_activity_rows(
         rows.append(
             {
                 "category": category,
-                "tokens": input_tokens + output_tokens + reasoning_tokens + cache_read_tokens + cache_write_tokens,
+                "tokens": input_tokens + output_tokens + cache_read_tokens + cache_write_tokens,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "reasoning_tokens": reasoning_tokens,
@@ -314,7 +316,7 @@ def _build_per_model_costs(
                 "estimated_cost": 0.0,
             }
             grouped[model_name] = row
-        row["tokens"] += call.input_tokens + call.output_tokens + call.reasoning_tokens + call.cache_read_tokens + call.cache_write_tokens
+        row["tokens"] += call.input_tokens + call.output_tokens + call.cache_read_tokens + call.cache_write_tokens
         row["input_tokens"] += call.input_tokens
         row["output_tokens"] += call.output_tokens
         row["reasoning_tokens"] += call.reasoning_tokens

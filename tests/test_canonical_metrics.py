@@ -119,7 +119,7 @@ def test_canonical_metrics_reads_data_and_part_model_shapes() -> None:
     out = build_canonical_metrics("s-data", messages)
     assert out.model == "openai/gpt-a"
     assert out.per_model_costs[0]["model"] == "openai/gpt-a"
-    assert out.per_model_costs[0]["tokens"] == 7
+    assert out.per_model_costs[0]["tokens"] == 6
 
 
 def test_local_model_has_zero_api_cost(tmp_path) -> None:

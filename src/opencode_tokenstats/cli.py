@@ -32,6 +32,8 @@ if __package__ in {None, ""}:
     from opencode_tokenstats.session_service import SessionService
     from opencode_tokenstats.tokenization import TokenizerRegistry
     from opencode_tokenstats.pricing import load_model_aliases, resolve_alias
+    from opencode_tokenstats.trends import build_period_trends
+    from opencode_tokenstats.telemetry import collect_telemetry_calls
 else:
     from .activity_classifier import classify_session, CATEGORY_LABELS, extract_root_dir
     from .client import ApiClientError, OpencodeApiClient
@@ -43,6 +45,11 @@ else:
     from .session_service import SessionService
     from .tokenization import TokenizerRegistry
     from .pricing import load_model_aliases, resolve_alias
+    from .trends import build_period_trends
+    from .telemetry import collect_telemetry_calls
+
+
+_FORK_PERIOD_METRIC_INPUTS: dict[str, tuple[dict[str, object], list[dict[str, object]]]] = {}
 
 
 class OrderedCommandsGroup(click.Group):
@@ -84,6 +91,9 @@ class OrderedCommandsGroup(click.Group):
 @click.option("--no-warmup", is_flag=True, help="Disable automatic tokenizer warmup")
 @click.option("--model-alias-file", default=None, help="Path to models.conf alias file")
 @click.option("-sf", "--session-filter", default=None, help="Comma-separated list of project root dir names to filter sessions by")
+@click.option("-sm", "--model-filter", default=None, help="Comma-separated model IDs or aliases; use !name to exclude")
+@click.option("--loc-scope", type=click.Choice(["code", "all"]), default="code", show_default=True, help="Git LOC scope")
+@click.option("--loc-exclude", default=None, help="Comma-separated Git path patterns to exclude from LOC")
 @click.option("-esl", "--export-session-list", default=None, help="Export selected session IDs to file (one per line)")
 @click.option("-o", "--session-output-dir", default=None, help="Export selected session transcripts to a directory")
 @click.option("--max-ext-tools", default=24, show_default=True, type=click.IntRange(1, None), help="Max external tools to include in External Tools panels")
@@ -100,6 +110,9 @@ def main(
     no_warmup: bool,
     model_alias_file: str | None,
     session_filter: str | None,
+    model_filter: str | None,
+    loc_scope: str,
+    loc_exclude: str | None,
     export_session_list: str | None,
     session_output_dir: str | None,
     max_ext_tools: int,
@@ -108,6 +121,14 @@ def main(
     session_filter_set: set[str] | None = None
     if session_filter:
         session_filter_set = {v.strip() for v in session_filter.split(",") if v.strip()}
+
+    model_filter_set: tuple[str, ...] | None = None
+    if model_filter:
+        selectors = tuple(v.strip() for v in model_filter.split(",") if v.strip())
+        if any(selector == "!" for selector in selectors):
+            raise click.ClickException("Model filter '!' must include a model name.")
+        model_filter_set = selectors
+    loc_exclude_set = tuple(v.strip() for v in (loc_exclude or "").split(",") if v.strip())
 
     ctx.obj = {
         "base_url": base_url,
@@ -120,6 +141,9 @@ def main(
         "model_alias_file": model_alias_file,
         "no_warmup": no_warmup,
         "session_filter": session_filter_set,
+        "model_filter": model_filter_set,
+        "loc_scope": loc_scope,
+        "loc_exclude": loc_exclude_set,
         "export_session_list": export_session_list,
         "session_output_dir": session_output_dir,
         "max_ext_tools": max_ext_tools,
@@ -319,8 +343,11 @@ def session(ctx: click.Context, session_id: str | None) -> None:
     if not sid:
         raise click.ClickException("No sessions available.")
     messages = _get_messages(options, sid)
+    messages = _filter_messages_by_model(messages, options)
     session_info = _find_session_info(sessions, sid) or _get_session_info(options, sid)
     canonical = build_canonical_metrics(sid, messages, session_info=session_info)
+    if options.get("model_filter"):
+        click.echo("WARNING: model filter active; tool/component attribution is approximate at assistant-message level.")
     top_tools_limit = _max_ext_tools(options)
     top_tools = [
         {
@@ -399,13 +426,16 @@ def lifetime(ctx: click.Context) -> None:
 
 
 @main.command(short_help="Aggregate explicit date window (e.g. 2026-05-01..2026-05-07)")
-@click.option("--from-date", required=True, help="YYYY-MM-DD (e.g. 2026-05-01)")
-@click.option("--to-date", required=True, help="YYYY-MM-DD (e.g. 2026-05-07)")
+@click.option("--from-date", required=True, help="YYYY-MM-DD (e.g. 2026-05-01), today, yesterday, or now")
+@click.option("--to-date", required=True, help="YYYY-MM-DD (e.g. 2026-05-07), today, yesterday, or now")
 @click.pass_context
 def range(ctx: click.Context, from_date: str, to_date: str) -> None:
     """Show aggregate for explicit date range."""
     start = _parse_date(from_date)
-    end = _parse_date(to_date) + timedelta(days=1)
+    parsed_end = _parse_date(to_date)
+    end = parsed_end if to_date.strip().lower() == "now" else parsed_end + timedelta(days=1)
+    if end <= start:
+        raise click.ClickException("Invalid date range: --to-date must be after --from-date")
     with _SessionProgress() as prog:
         report = _build_period_report(ctx.obj, start, end, progress_callback=prog.update)
     _print_report("range", report)
@@ -539,10 +569,15 @@ class _SessionProgress:
 
     def update(self, current: int, total: int) -> None:
         if self._bar is not None:
-            if self._bar.total == 0:
+            if total <= 0:
+                self._bar.total = None
+                self._bar.set_description("Finding in-period sessions")
+                self._bar.n = 0
+            else:
                 self._bar.total = total
-                self._bar.refresh()
-            self._bar.update(1)
+                self._bar.set_description(self._desc)
+                self._bar.n = current
+            self._bar.refresh()
 
 
 def _print_period_report(options: dict[str, object], *, days: int, label: str) -> None:
@@ -785,6 +820,15 @@ def _build_period_report(
     top_sessions.sort(key=lambda x: x["api_cost"] if x["api_cost"] > 0 else x["estimated_cost"], reverse=True)
     top_sessions = top_sessions[:10]
 
+    trends = build_period_trends(
+        start=start,
+        end=end,
+        session_metrics=session_metrics,
+        session_dirs=session_dirs,
+        loc_scope=str(options.get("loc_scope", "code")),
+        loc_exclude=tuple(options.get("loc_exclude", ())),
+    )
+
     return {
         "sessions": used,
         "api_calls": total_calls,
@@ -804,6 +848,8 @@ def _build_period_report(
         "model_costs": _finalize_model_costs(model_map),
         "by_activity": by_activity,
         "top_sessions": top_sessions,
+        "trends": trends,
+        "model_filter_active": bool(options.get("model_filter")),
     }
 
 
@@ -814,37 +860,80 @@ def _collect_period_session_metrics(
     *,
     progress_callback: callable | None = None,
 ) -> list[object]:
+    if progress_callback:
+        progress_callback(0, 0)
     sessions = _list_sessions(options)
     out = []
-    total = len(sessions)
+    model_aliases = load_model_aliases(options.get("model_alias_file"))
+    results: dict[str, tuple[dict[str, object], list[dict[str, object]]]] = {}
 
-    # Filter sessions by date range first
-    eligible_sessions = []
-    for sess in sessions:
-        created = _session_created_at(sess)
-        sid = sess.get("id")
-        if created is not None and created >= start and created < end and isinstance(sid, str) and sid:
-            eligible_sessions.append((sid, sess))
+    if options["mode"] == "local":
+        db_path = LocalSessionService.find_database_path(options.get("db_path"))
+        session_by_id = {
+            str(session["id"]): session
+            for session in sessions
+            if isinstance(session.get("id"), str) and session.get("id")
+        }
+        session_filter = options.get("session_filter")
+        selected_ids: set[str] | None = None
+        if session_filter:
+            selected_ids = {
+                sid
+                for sid, session in session_by_id.items()
+                if extract_root_dir(str(session.get("directory", ""))) in session_filter
+            }
+        period_messages = LocalSessionService(db_path=db_path).get_period_messages(
+            int(start.timestamp() * 1000), int(end.timestamp() * 1000), session_ids=selected_ids
+        )
+        for sid, messages in period_messages.items():
+            session_info = session_by_id.get(sid, {"id": sid})
+            if session_filter and extract_root_dir(str(session_info.get("directory", ""))) not in session_filter:
+                continue
+            results[sid] = (
+                session_info,
+                _filter_messages_by_model(messages, options, aliases=model_aliases),
+            )
+        eligible_count = len(results)
+    else:
+        # API mode has no local part index; use the session time interval as a
+        # candidate filter and retain exact part-time filtering below.
+        eligible_sessions = []
+        for sess in sessions:
+            created = _session_created_at(sess)
+            sid = sess.get("id")
+            updated = _session_updated_at(sess)
+            overlaps_period = (
+                created is not None
+                and created < end
+                and (updated is None or updated >= start)
+            )
+            if overlaps_period and isinstance(sid, str) and sid:
+                eligible_sessions.append((sid, sess))
 
-    if not eligible_sessions:
+        if not eligible_sessions:
+            return out
+
+        def fetch_session(sid: str, session_info: dict[str, object]) -> tuple[str, dict[str, object], list[dict[str, object]]]:
+            messages = _get_messages(options, sid)
+            messages = _filter_messages_to_period(messages, start, end)
+            messages = _filter_messages_by_model(messages, options, aliases=model_aliases)
+            return (sid, session_info, messages)
+
+        max_workers = min(len(eligible_sessions), 8)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(fetch_session, sid, sess): sid for sid, sess in eligible_sessions}
+            for future in as_completed(futures):
+                try:
+                    sid, session_info, messages = future.result()
+                    results[sid] = (session_info, messages)
+                except Exception:
+                    pass
+        eligible_count = len(eligible_sessions)
+
+    if not results:
         return out
-
-    # Parallel fetch messages for eligible sessions
-    def fetch_session(sid: str, session_info: dict[str, object]) -> tuple[str, dict[str, object], list[dict[str, object]]]:
-        messages = _get_messages(options, sid)
-        return (sid, session_info, messages)
-
-    max_workers = min(len(eligible_sessions), 8)  # Cap at 8 workers
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(fetch_session, sid, sess): sid for sid, sess in eligible_sessions}
-
-        results = {}
-        for future in as_completed(futures):
-            try:
-                sid, session_info, messages = future.result()
-                results[sid] = (session_info, messages)
-            except Exception:
-                pass
+    if progress_callback:
+        progress_callback(0, eligible_count)
 
     # Build canonical metrics in parallel across CPU cores.
     worker_count = min(len(results), max(os.cpu_count() or 1, 1))
@@ -852,27 +941,38 @@ def _collect_period_session_metrics(
         for sid, (session_info, messages) in results.items():
             out.append(build_canonical_metrics(sid, messages, session_info=session_info))
             if progress_callback:
-                progress_callback(len(out), len(eligible_sessions))
+                progress_callback(len(out), eligible_count)
         return out
 
     start_method = "fork" if sys.platform.startswith("linux") else "spawn"
-    with ProcessPoolExecutor(max_workers=worker_count, mp_context=mp.get_context(start_method)) as executor:
-        futures = {
-            executor.submit(_build_session_metrics, sid, messages, session_info): sid
-            for sid, (session_info, messages) in results.items()
-        }
-        done = 0
-        for future in as_completed(futures):
-            sid = futures[future]
-            try:
-                out.append(future.result())
-            except Exception:
-                # Best-effort: fall back to local compute if worker fails.
-                session_info, messages = results.get(sid, ({}, []))
-                out.append(build_canonical_metrics(sid, messages, session_info=session_info))
-            done += 1
-            if progress_callback:
-                progress_callback(done, len(eligible_sessions))
+    global _FORK_PERIOD_METRIC_INPUTS
+    try:
+        if start_method == "fork":
+            # Fork workers inherit this mapping copy-on-write. Submit IDs only so we
+            # do not pickle hundreds of thousands of already-parsed SQLite parts.
+            _FORK_PERIOD_METRIC_INPUTS = results
+        with ProcessPoolExecutor(max_workers=worker_count, mp_context=mp.get_context(start_method)) as executor:
+            if start_method == "fork":
+                futures = {executor.submit(_build_fork_period_session_metrics, sid): sid for sid in results}
+            else:
+                futures = {
+                    executor.submit(_build_session_metrics, sid, messages, session_info): sid
+                    for sid, (session_info, messages) in results.items()
+                }
+            done = 0
+            for future in as_completed(futures):
+                sid = futures[future]
+                try:
+                    out.append(future.result())
+                except Exception:
+                    # Best-effort: fall back to local compute if worker fails.
+                    session_info, messages = results.get(sid, ({}, []))
+                    out.append(build_canonical_metrics(sid, messages, session_info=session_info))
+                done += 1
+                if progress_callback:
+                    progress_callback(done, eligible_count)
+    finally:
+        _FORK_PERIOD_METRIC_INPUTS = {}
 
     return out
 
@@ -885,7 +985,45 @@ def _build_session_metrics(
     return build_canonical_metrics(session_id, messages, session_info=session_info)
 
 
+def _build_fork_period_session_metrics(session_id: str) -> object:
+    """Build one metric from the parent process's fork-inherited input mapping."""
+    session_info, messages = _FORK_PERIOD_METRIC_INPUTS[session_id]
+    return build_canonical_metrics(session_id, messages, session_info=session_info)
+
+
+def _filter_messages_by_model(
+    messages: list[dict[str, object]],
+    options: dict[str, object],
+    *,
+    aliases: dict[str, str] | None = None,
+) -> list[dict[str, object]]:
+    selectors = options.get("model_filter")
+    if not selectors:
+        return messages
+    positive = {str(value) for value in selectors if not str(value).startswith("!")}
+    negative = {str(value)[1:] for value in selectors if str(value).startswith("!")}
+    aliases = aliases if aliases is not None else load_model_aliases(options.get("model_alias_file"))
+
+    def matches(message: dict[str, object]) -> bool:
+        for call in collect_telemetry_calls([message]):
+            provider = str(getattr(call, "provider_id", "") or "")
+            model = str(getattr(call, "model_id", "") or "")
+            raw = f"{provider}/{model}" if provider and model else model or provider
+            names = {raw, model, resolve_alias(raw, aliases)} - {""}
+            if (not positive or names & positive) and not names & negative:
+                return True
+        return False
+
+    return [
+        message
+        for message in messages
+        if message.get("role") != "assistant" or matches(message)
+    ]
+
+
 def _print_report(label: str, report: dict[str, object]) -> None:
+    if report.get("model_filter_active"):
+        click.echo("WARNING: model filter active; tool/component attribution is approximate at assistant-message level.")
     print_period_report(label, report)
 
 
@@ -961,7 +1099,94 @@ def _session_created_at(session: dict[str, object]) -> datetime | None:
     return datetime.fromtimestamp(value, UTC)
 
 
+def _session_updated_at(session: dict[str, object]) -> datetime | None:
+    """Return OpenCode's last session update time when available."""
+    raw: object = session.get("time_updated")
+    if raw is None:
+        raw = session.get("updated_at")
+    if raw is None:
+        session_time = session.get("time")
+        if isinstance(session_time, dict):
+            raw = session_time.get("updated")
+    if raw is None:
+        data = session.get("data")
+        if isinstance(data, dict):
+            nested = data.get("time")
+            if isinstance(nested, dict):
+                raw = nested.get("updated")
+            if raw is None:
+                raw = data.get("time_updated")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if value > 10_000_000_000:
+        value /= 1000
+    return datetime.fromtimestamp(value, UTC)
+
+
+def _timestamp_from_record(record: dict[str, object]) -> datetime | None:
+    """Read a record timestamp, accepting OpenCode seconds or milliseconds."""
+    candidates = [
+        record.get("_time_created"),
+        record.get("time_created"),
+        record.get("timestamp"),
+        record.get("time"),
+    ]
+    info = record.get("info")
+    if isinstance(info, dict):
+        candidates.extend((info.get("time_created"), info.get("timestamp")))
+        nested = info.get("time")
+        if isinstance(nested, dict):
+            candidates.append(nested.get("created"))
+    for raw in candidates:
+        if raw is None:
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 10_000_000_000:
+            value /= 1000
+        # Small serialized part `time` values are durations, not timestamps.
+        if value >= 1_000_000_000:
+            return datetime.fromtimestamp(value, UTC)
+    return None
+
+
+def _filter_messages_to_period(
+    messages: list[dict[str, object]], start: datetime, end: datetime
+) -> list[dict[str, object]]:
+    """Keep only messages/parts with activity inside the requested period."""
+    filtered: list[dict[str, object]] = []
+    for message in messages:
+        message_in_period = _timestamp_from_record(message)
+        parts = message.get("parts")
+        kept_parts: list[object] = []
+        if isinstance(parts, list):
+            for part in parts:
+                if isinstance(part, dict):
+                    timestamp = _timestamp_from_record(part)
+                    if timestamp is not None and start <= timestamp < end:
+                        kept_parts.append(part)
+        if (message_in_period is not None and start <= message_in_period < end) or kept_parts:
+            copy = dict(message)
+            if isinstance(parts, list):
+                copy["parts"] = kept_parts
+            filtered.append(copy)
+    return filtered
+
+
 def _parse_date(value: str) -> datetime:
+    keyword = value.strip().lower()
+    if keyword == "now":
+        return datetime.now(UTC)
+    if keyword == "today":
+        return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    if keyword == "yesterday":
+        return (datetime.now(UTC) - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     try:
         return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError as exc:

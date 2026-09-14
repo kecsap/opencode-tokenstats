@@ -106,6 +106,7 @@ The report focuses on the stuff that matters when AI usage gets expensive or noi
 - **OpenCode Contribution** to measure built-in tool overhead
 - **MCP Servers** to isolate external tool usage
 - **By Activity / Top Sessions** for period dashboards
+- **Period Trends** for correlated token usage, lines changed, and tokens per changed LOC
 
 If you know [CodeBurn](https://github.com/getagentseal/codeburn), the goal is similar: make AI usage visible. This project is narrower and lazier on purpose: **OpenCode-first, simple CLI, no extra stack**.
 
@@ -134,6 +135,13 @@ If you know [CodeBurn](https://github.com/getagentseal/codeburn), the goal is si
 - `--no-warmup`
 - `--model-alias-file <path>`
 - `--session-filter <root1,root2,...>`
+- `--loc-scope code|all` (default: `code`)
+- `--loc-exclude <pattern1,pattern2,...>`
+
+Period reports show three fixed-width aggregate trend charts when selected sessions map
+to Git repositories and have timestamped token telemetry. Git churn counts added plus
+deleted lines in `HEAD` history; the report also shows signed net LOC. Sessions without
+both sources are excluded from the charts, while the normal report totals are unchanged.
 
 ---
 

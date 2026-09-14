@@ -3,8 +3,24 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from click.testing import CliRunner
+import pytest
 
 from opencode_tokenstats import cli
+
+
+@pytest.fixture(autouse=True)
+def _mock_local_period_messages(monkeypatch):
+    """Keep CLI unit tests independent from the developer's local OpenCode DB."""
+    def get_period_messages(_service, _start, _end, *, session_ids=None):
+        sessions = cli._list_sessions({})
+        return {
+            str(session["id"]): cli._get_messages({}, str(session["id"]))
+            for session in sessions
+            if isinstance(session.get("id"), str)
+            and (session_ids is None or str(session["id"]) in session_ids)
+        }
+
+    monkeypatch.setattr(cli.LocalSessionService, "get_period_messages", get_period_messages)
 
 
 def _sessions():

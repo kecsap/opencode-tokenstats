@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 try:
-    from rich.console import Console
+    from rich.console import Console, Group
     from rich.columns import Columns
     from rich.panel import Panel
     from rich.table import Table
@@ -25,6 +25,7 @@ COL_CYAN = "#5BF5E0"
 COL_MAGENTA = "#F55BE0"
 COL_GOLD = "#FFD700"
 COL_DIM = "#555555"
+COL_AXIS = "#B0B0B0"
 COL_BAR_EMPTY = "#333333"
 
 COL_INPUT = COL_BLUE
@@ -104,13 +105,19 @@ def _color_bar(value: int, max_value: int, color: str, width: int = 12) -> Text:
     return bar
 
 
-def _build_composition_table(token_composition: dict[str, int], total_tokens: int) -> Table:
+def _build_composition_table(
+    token_composition: dict[str, int],
+    total_tokens: int,
+    category_ratios: dict[str, Any] | None = None,
+    total_ratio: Any = None,
+) -> Table:
     """Build a Token Composition table with bars and colors."""
     comp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
     comp.add_column("", style="bold")
     comp.add_column("", justify="left")
     comp.add_column("Tokens", justify="right")
     comp.add_column("%", justify="right")
+    comp.add_column("Tokens/ΔLOC", justify="right")
 
     # Color mapping for components
     color_map = {
@@ -120,8 +127,11 @@ def _build_composition_table(token_composition: dict[str, int], total_tokens: in
         "reasoning": COL_REASONING,
     }
 
-    excluded = {"cache_write", "web_search_requests"}
+    excluded = {"cache_write", "web_search_requests", "reasoning"}
     displayed = {k: v for k, v in token_composition.items() if k not in excluded}
+    composition_total = sum(
+        int(token_composition.get(key, 0)) for key in ("input", "cache_read", "output")
+    )
     max_val = max(displayed.values()) if displayed else 1
 
     for key, value in displayed.items():
@@ -129,12 +139,23 @@ def _build_composition_table(token_composition: dict[str, int], total_tokens: in
             continue
         color = color_map.get(key, COL_TOTAL)
         bar_text = _color_bar(value, max_val, color, width=6)
-        pct = value / total_tokens * 100 if total_tokens else 0
-        comp.add_row(key, bar_text, _fmt_int(value), f"{pct:.1f}")
+        pct = value / composition_total * 100 if composition_total else 0
+        ratio_key = {
+            "input": "input_tokens",
+            "cache_read": "cache_read_tokens",
+            "output": "output_tokens",
+        }.get(key, key)
+        ratio = category_ratios.get(ratio_key) if category_ratios else None
+        label = "input (cached)" if key == "cache_read" else key
+        comp.add_row(label, bar_text, _fmt_int(value), f"{pct:.1f}", _trend_value(ratio))
+
+    reasoning = int(token_composition.get("reasoning", 0))
+    if reasoning:
+        comp.add_row("(reasoning)", "", f"({_fmt_int(reasoning)})", "—", "—")
 
     # Add total row (no bar)
-    comp.add_row("", "", "", "")
-    comp.add_row("total", "", _fmt_int(total_tokens), "100.0")
+    comp.add_row("", "", "", "", "")
+    comp.add_row("total", "", _fmt_int(composition_total), "100.0", _trend_value(total_ratio))
 
     return comp
 
@@ -180,6 +201,200 @@ def _build_top_tools_columns(top_tools: list[dict[str, Any]]):
         )
 
     return Columns(panels, equal=False, padding=0)
+
+
+def _trend_value(value: Any) -> str:
+    if value is None:
+        return "—"
+    return _fmt_int(value)
+
+
+def _trend_axis_value(value: Any) -> str:
+    """Compact chart axis labels while keeping report/table values exact."""
+    number = float(value or 0)
+    absolute = abs(number)
+    suffix = ""
+    divisor = 1.0
+    if absolute >= 1_000_000_000:
+        suffix, divisor = "B", 1_000_000_000.0
+    elif absolute >= 1_000_000:
+        suffix, divisor = "M", 1_000_000.0
+    elif absolute >= 1_000:
+        suffix, divisor = "K", 1_000.0
+    if not suffix:
+        return _fmt_int(int(number))
+    compact = number / divisor
+    rendered = f"{compact:.2f}".rstrip("0").rstrip(".")
+    return f"{rendered}{suffix}"
+
+
+def _build_trend_chart(
+    title: str,
+    values: list[Any],
+    color: str,
+    summary: str,
+    start_label: str,
+    midpoint_label: str,
+    end_label: str,
+    width: int,
+) -> Panel:
+    height = 6
+    numeric = [float(value) for value in values if value is not None]
+    maximum = max(numeric, default=0.0)
+    partial_glyphs = " ▁▂▃▄▅▆▇"
+    body = Text()
+    for row in range(height, 0, -1):
+        axis_label = ""
+        if row == height:
+            axis_label = _trend_axis_value(maximum)
+        elif row == (height + 1) // 2:
+            axis_label = _trend_axis_value(maximum / 2)
+        body.append(f"{axis_label:>7} ", style=COL_AXIS)
+        body.append("┤ ", style=COL_AXIS)
+        for value in values[:width]:
+            if value is None:
+                body.append(" ")
+                continue
+            levels = round(float(value) / maximum * height * 8) if maximum else 0
+            full_cells, partial_level = divmod(levels, 8)
+            # Match table bars: low values are blue and high values move
+            # through yellow toward orange/red. The partial cap uses the same
+            # value-based color as the full cells below it.
+            pct = min(1.0, max(0.0, float(value) / maximum)) if maximum else 0.0
+            bar_color = f"bold {_gradient_color(pct)}"
+            if full_cells >= row:
+                body.append("█", style=bar_color)
+            elif partial_level and full_cells + 1 == row:
+                body.append(partial_glyphs[partial_level], style=bar_color)
+            elif levels == 0 and row == 1 and float(value) > 0:
+                body.append("·", style=COL_DIM)
+            else:
+                body.append("░", style=COL_BAR_EMPTY)
+        body.append("\n")
+    axis = ["─"] * width
+    # Major ticks anchor the sparse start/middle/end labels. Three minor ticks
+    # between each major interval add temporal reference points without adding
+    # more date labels.
+    for position in (
+        width // 8,
+        (2 * width) // 8,
+        (3 * width) // 8,
+        width // 2,
+        (5 * width) // 8,
+        (6 * width) // 8,
+        (7 * width) // 8,
+        width - 1,
+    ):
+        axis[position] = "┴"
+    body.append(f"{'0':>7} └{''.join(axis)}", style=COL_AXIS)
+    labels = [" "] * width
+    label_positions = [(0, start_label), (max(0, width - len(end_label)), end_label)]
+    if width >= 24:
+        label_positions.insert(1, (max(0, width // 2 - len(midpoint_label) // 2), midpoint_label))
+    for position, label in label_positions:
+        for index, character in enumerate(label):
+            target = position + index
+            if target < width:
+                labels[target] = character
+    body.append(f"\n{'':>9}{''.join(labels)}", style=COL_AXIS)
+    body.append(f"\n{'':>9}{summary}", style=COL_AXIS)
+    return Panel(body, title=f"[bold]{title}[/bold]", border_style=color, expand=False)
+
+
+def _print_trends(console: Console, trends: dict[str, Any]) -> None:
+    points = trends.get("points")
+    if not isinstance(points, list) or not points:
+        return
+    def short_date(point: dict[str, Any]) -> str:
+        raw = str(point.get("date", ""))
+        try:
+            return datetime.fromisoformat(raw).strftime("%b %d")
+        except ValueError:
+            return raw[:10]
+
+    start_label = short_date(points[0])
+    midpoint_label = short_date(points[len(points) // 2])
+    end_label = short_date(points[-1])
+    width = min(48, max(12, (console.width - 8) // 3))
+
+    def fit(values: list[Any]) -> list[Any]:
+        if len(values) <= width:
+            return values
+        return [values[round(index * (len(values) - 1) / (width - 1))] for index in range(width)]
+
+    categories = [
+        ("Input Tokens", "input_tokens", COL_BLUE),
+        ("Cache Read Tokens", "cache_read_tokens", COL_CYAN),
+        ("Output Tokens", "output_tokens", COL_PURPLE),
+    ]
+    token_charts = [
+        _build_trend_chart(
+            title,
+            fit([p.get(key, 0) for p in points]),
+            color,
+            f"total {_fmt_int(trends.get(key, 0))}",
+            start_label,
+            midpoint_label,
+            end_label,
+            width,
+        )
+        for title, key, color in categories
+    ]
+    ratio_charts = [
+        _build_trend_chart(
+            f"{title} / ΔLOC",
+            fit([p.get(f"{key}_per_loc") for p in points]),
+            color,
+            f"period {_trend_value(trends.get('category_tokens_per_loc', {}).get(key))} tok/LOC",
+            start_label,
+            midpoint_label,
+            end_label,
+            width,
+        )
+        for title, key, color in categories
+    ]
+    console.print(Columns(token_charts, equal=True, expand=True, padding=1))
+    console.print(Columns(ratio_charts, equal=True, expand=True, padding=1))
+    git_chart = _build_trend_chart(
+        "Lines Changed",
+        fit([p.get("churn_loc", 0) for p in points]),
+        COL_ORANGE,
+        f"changed {_fmt_int(trends.get('churn_loc', 0))}  +{_fmt_int(trends.get('added_loc', 0))}  -{_fmt_int(trends.get('deleted_loc', 0))}  net {int(trends.get('net_loc', 0)):+d}",
+        start_label,
+        midpoint_label,
+        end_label,
+        width,
+    )
+    console.print(git_chart)
+    outliers = trends.get("outliers", [])
+    if outliers:
+        outlier_table = Table(show_header=True, box=None, expand=False)
+        outlier_table.add_column("Bucket", style=COL_AXIS)
+        outlier_table.add_column("ΔLOC", justify="right")
+        outlier_table.add_column("+", justify="right")
+        outlier_table.add_column("-", justify="right")
+        outlier_table.add_column("Trigger")
+        outlier_table.add_column("Largest commits")
+        for outlier in outliers:
+            causes = []
+            for commit in outlier.get("commits", []):
+                causes.append(f"{commit['sha'][:7]}  {_fmt_int(commit.get('delta_loc', 0))} ΔLOC  {commit['subject']}")
+            remainder = int(outlier.get("other_commits_delta_loc", 0))
+            if remainder:
+                causes.append(f"Other commits  {_fmt_int(remainder)} ΔLOC")
+            outlier_table.add_row(
+                f"{str(outlier.get('date', ''))[5:16].replace('T', ' ')}–\n{str(outlier.get('end_date', ''))[5:16].replace('T', ' ')} UTC",
+                _fmt_int(outlier.get("churn_loc", 0)),
+                _fmt_int(outlier.get("added_loc", 0)),
+                _fmt_int(outlier.get("deleted_loc", 0)),
+                "\n".join(
+                    f"{key.replace('_tokens_per_loc', '')} {_trend_value(value.get('ratio'))} (>{_trend_value(value.get('threshold'))})"
+                    for key, value in outlier.get("triggers", {}).items()
+                ) or "—",
+                "\n".join(causes) or "—",
+            )
+        console.print(Panel(outlier_table, title="[bold]Chart Outliers[/bold]", border_style=COL_ORANGE, expand=False))
+
 
 
 def print_status_report(mode: str, sessions: list[dict[str, object]]) -> None:
@@ -374,11 +589,19 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
             print(f"Activity by Turn: {report['by_activity']}")
         if report.get("top_sessions"):
             print(f"Top Sessions: {report['top_sessions']}")
+        if report.get("trends"):
+            trends = report["trends"]
+            print(f"Period Trends: {trends.get('tokens', 0)} tokens, {trends.get('churn_loc', 0)} ΔLOC")
+        else:
+            print("Period Trends unavailable: no session has both Git history and timestamped token data.")
         return
 
     console = Console()
     total_tokens = report.get("tokens", 0)
     token_composition = report.get("token_composition")
+    trends = report.get("trends")
+    trend_ratios = trends.get("category_tokens_per_loc", {}) if isinstance(trends, dict) else None
+    trend_total_ratio = trends.get("tokens_per_loc") if isinstance(trends, dict) else None
 
     # Build Period Summary table (without Tokens - moved to composition)
     summary_table = Table(show_header=False, box=None)
@@ -392,7 +615,9 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
 
     # Build Token Composition table with bars
     if token_composition and isinstance(token_composition, dict):
-        comp_table = _build_composition_table(token_composition, total_tokens)
+        comp_table = _build_composition_table(
+            token_composition, total_tokens, trend_ratios, trend_total_ratio
+        )
     else:
         comp_table = Table(show_header=False, box=None)
         comp_table.add_row("No token composition data")
@@ -430,7 +655,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_float(api_cost),
                 _fmt_float(item.get("estimated_cost")),
             )
-        model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN)
+        model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN, expand=False)
     else:
         model_costs_panel = None
 
@@ -468,7 +693,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_float(row.get("api_cost", 0)),
                 _fmt_float(row.get("estimated_cost", 0)),
             )
-        act_panel = Panel(act, title="[bold]Activity by Turn[/bold]", border_style=COL_GREEN)
+        act_panel = Panel(act, title="[bold]Activity by Turn[/bold]", border_style=COL_GREEN, expand=False)
 
     # Build Top Sessions panel
     top_sess_panel = None
@@ -502,7 +727,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_float(row.get("api_cost", 0)),
                 _fmt_float(row.get("estimated_cost", 0)),
             )
-        top_sess_panel = Panel(ts, title="[bold]Top Sessions[/bold]", border_style=COL_ORANGE)
+        top_sess_panel = Panel(ts, title="[bold]Top Sessions[/bold]", border_style=COL_ORANGE, expand=False)
 
     # Build External Tools panel
     top_tools = report.get("top_tools")
@@ -510,17 +735,21 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     if isinstance(top_tools, list) and top_tools:
         top_tools_renderable = _build_top_tools_columns(top_tools)
 
-    summary_panel = Panel(summary_table, title="[bold]Period Summary[/bold]", border_style=COL_MAGENTA)
-    comp_panel = Panel(comp_table, title="[bold]Token Composition[/bold]", border_style=COL_BLUE)
+    summary_panel = Panel(summary_table, title="[bold]Period Summary[/bold]", border_style=COL_MAGENTA, expand=False)
+    comp_panel = Panel(comp_table, title="[bold]Token Summary[/bold]", border_style=COL_BLUE, expand=False)
 
-    first_row = [summary_panel, comp_panel]
-    if act_panel:
-        first_row.append(act_panel)
-    console.print(Columns(first_row, equal=False, padding=0))
-
-    second_row = [panel for panel in (model_costs_panel, top_sess_panel) if panel]
-    if second_row:
-        console.print(Columns(second_row, equal=False, padding=0))
+    left_top = Columns([summary_panel, comp_panel], equal=False, padding=0)
+    left_column = Group(left_top, model_costs_panel) if model_costs_panel else left_top
+    right_panels = [panel for panel in (act_panel, top_sess_panel) if panel]
+    right_column = Group(*right_panels) if right_panels else None
+    if right_column:
+        upper_grid = Table.grid(expand=True, padding=(0, 1))
+        upper_grid.add_column(ratio=1)
+        upper_grid.add_column(ratio=1)
+        upper_grid.add_row(left_column, right_column)
+        console.print(upper_grid)
+    else:
+        console.print(left_column)
 
     mcp_stats = report.get("mcp_stats")
     core_stats = report.get("core_stats")
@@ -608,3 +837,8 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     # External Tools at the bottom (not spanning full width)
     if top_tools_renderable:
         console.print(top_tools_renderable)
+
+    if isinstance(trends, dict):
+        _print_trends(console, trends)
+    else:
+        console.print(Text("Period Trends unavailable: no session has both Git history and timestamped token data.", style=COL_DIM))

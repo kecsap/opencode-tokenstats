@@ -7,6 +7,7 @@ from typing import Any
 from .activity_classifier import classify_session, CATEGORY_LABELS
 from .canonical_metrics import CanonicalMetrics
 from .pricing import load_model_aliases, resolve_alias
+from .trends import build_period_trends
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +240,12 @@ def build_report_schema(
 
     session_rows.sort(key=lambda x: x["api_cost"] if x["api_cost"] > 0 else x["estimated_cost"], reverse=True)
     top_sessions = session_rows[:10]
+    trends = build_period_trends(
+        start=start,
+        end=end,
+        session_metrics=session_metrics,
+        session_dirs=session_dirs or {},
+    )
 
     return {
         "overview": {
@@ -265,6 +272,7 @@ def build_report_schema(
         "models": model_rows,
         "by_activity": by_activity,
         "top_sessions": top_sessions,
+        "trends": trends,
     }
 
 
@@ -287,6 +295,38 @@ def report_to_markdown(report: dict[str, Any]) -> str:
     lines.append("## Top Models")
     for model in report.get("models", [])[:10]:
         lines.append(f"- {model['model']}: API=${model['api_cost']}, Est=${model['estimated_cost']}")
+    trends = report.get("trends")
+    if trends:
+        lines.extend([
+            "",
+            "## Period Trends",
+            f"- Repositories: {len(trends.get('repositories', []))}",
+            f"- Input tokens: {trends.get('input_tokens', 0)}",
+            f"- Cache-read tokens: {trends.get('cache_read_tokens', 0)}",
+            f"- Output tokens: {trends.get('output_tokens', 0)}",
+            f"- Lines changed: +{trends.get('added_loc', 0)} / -{trends.get('deleted_loc', 0)}",
+            "",
+            "| Category | Tokens | Tokens/ΔLOC |",
+            "| --- | ---: | ---: |",
+        ])
+        ratios = trends.get("category_tokens_per_loc", {})
+        for key, label in (
+            ("input_tokens", "Input"),
+            ("cache_read_tokens", "Cache read"),
+            ("output_tokens", "Output"),
+        ):
+            lines.append(f"| {label} | {trends.get(key, 0)} | {ratios.get(key, '—')} |")
+        lines.extend([
+            "",
+            "| Bucket | Input | Cache read | Output | ΔLOC |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ])
+        for point in trends.get("points", []):
+            lines.append(
+                f"| {point.get('date')} | {point.get('input_tokens', 0)} | "
+                f"{point.get('cache_read_tokens', 0)} | {point.get('output_tokens', 0)} | "
+                f"{point.get('churn_loc', 0)} |"
+            )
     warnings = report.get("warnings", [])
     if warnings:
         lines.append("")

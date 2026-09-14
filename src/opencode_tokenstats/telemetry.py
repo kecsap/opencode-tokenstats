@@ -105,7 +105,6 @@ def summarize_telemetry(calls: list[TelemetryCall]) -> TelemetrySummary:
         total_tokens=(
             input_tokens
             + output_tokens
-            + reasoning_tokens
             + cache_read_tokens
             + cache_write_tokens
         ),
@@ -114,6 +113,16 @@ def summarize_telemetry(calls: list[TelemetryCall]) -> TelemetrySummary:
         most_recent_call=most_recent_call,
         per_model_usage=per_model_usage,
     )
+
+
+def _epoch_ms(value: object) -> int | None:
+    """Normalize epoch seconds/milliseconds; reject duration-like values."""
+    parsed = _safe_optional_int(value)
+    if parsed is None or parsed <= 0:
+        return None
+    if parsed < 10_000_000_000:
+        parsed *= 1000
+    return parsed if parsed >= 100_000_000_000 else None
 
 
 def summarize_session_with_subagents(
@@ -184,8 +193,11 @@ def _step_finish_calls(parts: list[dict[str, Any]], message: dict[str, Any]) -> 
                 cache_write_tokens=_safe_int(cache.get("write")),
                 web_search_requests=_safe_int(server_tool_use.get("web_search_requests")),
                 cost=_safe_float(part.get("cost")),
-                timestamp_ms=_safe_optional_int(part.get("timestamp"))
-                or _safe_optional_int(part.get("time")),
+                timestamp_ms=(
+                    _safe_optional_int(part.get("timestamp"))
+                    or _epoch_ms(part.get("_time_created"))
+                    or _epoch_ms(part.get("time"))
+                ),
             )
         )
     return calls
@@ -218,9 +230,7 @@ def _fallback_message_call(message: dict[str, Any]) -> TelemetryCall | None:
     if isinstance(message.get("time"), dict):
         time_info = message.get("time")
     if time_info:
-        timestamp_ms = _safe_optional_int(time_info.get("completed")) or _safe_optional_int(
-            time_info.get("created")
-        )
+        timestamp_ms = _epoch_ms(time_info.get("completed")) or _epoch_ms(time_info.get("created"))
 
     return TelemetryCall(
         provider_id=provider_id,
