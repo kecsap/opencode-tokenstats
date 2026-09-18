@@ -48,5 +48,8 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+opencode_tokenstats = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

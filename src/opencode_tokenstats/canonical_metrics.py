@@ -36,6 +36,7 @@ class CanonicalMetrics:
     warnings: list[str] = field(default_factory=list)
     activity_rows: list[dict[str, Any]] = field(default_factory=list)
     trend_calls: list[TelemetryCall] = field(default_factory=list)
+    pricing_coverage: dict[str, Any] = field(default_factory=dict)
 
 
 def build_canonical_metrics(
@@ -66,6 +67,8 @@ def build_canonical_metrics(
         include_estimated_cost=not (not is_local_model and telemetry.total_cost > 0),
     )
     per_model_costs = _build_per_model_costs(telemetry_calls, fallback_model=model, pricing_lookup=pricing_lookup)
+    pricing_coverage = _build_pricing_coverage(per_model_costs)
+    warnings.extend(_pricing_warnings(per_model_costs))
     tool_rows: list[dict[str, Any]] = []
     component_rows: list[dict[str, Any]] = []
     total_tool_tokens = sum(t.output_tokens for t in attribution.tool_usage)
@@ -159,6 +162,7 @@ def build_canonical_metrics(
         warnings=warnings,
         activity_rows=activity_rows,
         trend_calls=telemetry_calls,
+        pricing_coverage=pricing_coverage,
     )
 
 
@@ -201,7 +205,7 @@ def _build_activity_rows(
         rows.append(
             {
                 "category": category,
-                "tokens": input_tokens + output_tokens + cache_read_tokens + cache_write_tokens,
+                "tokens": input_tokens + output_tokens + reasoning_tokens + cache_read_tokens + cache_write_tokens,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "reasoning_tokens": reasoning_tokens,
@@ -262,10 +266,12 @@ def _estimate_session_cost_per_call(
         model_name = PricingLookup.build_lookup_key(call.provider_id, call.model_id)
         if not model_name:
             model_name = fallback_model
-        pricing = pricing_lookup.get_pricing(model_name)
+        resolution = pricing_lookup.resolve_call_pricing(model_name, call.timestamp_ms)
+        if resolution.pricing is None:
+            continue
         context_tokens = call.input_tokens + call.cache_read_tokens + call.cache_write_tokens
         total += estimate_session_cost_usd(
-            pricing,
+            resolution.pricing,
             input_tokens=call.input_tokens,
             output_tokens=call.output_tokens,
             reasoning_tokens=call.reasoning_tokens,
@@ -275,6 +281,41 @@ def _estimate_session_cost_per_call(
             context_tokens=context_tokens,
         )
     return total
+
+
+def _build_pricing_coverage(per_model_costs: list[dict[str, Any]]) -> dict[str, Any]:
+    total_calls = 0
+    priced_calls = 0
+    future_fallback_calls = 0
+    unpriced_calls = 0
+    for row in per_model_costs:
+        total_calls += int(row.get("priced_calls", 0)) + int(row.get("unpriced_calls", 0))
+        priced_calls += int(row.get("priced_calls", 0))
+        future_fallback_calls += int(row.get("future_fallback_calls", 0))
+        unpriced_calls += int(row.get("unpriced_calls", 0))
+    return {
+        "calls": total_calls,
+        "priced_calls": priced_calls,
+        "future_fallback_calls": future_fallback_calls,
+        "unpriced_calls": unpriced_calls,
+        "coverage_percent": round(priced_calls / total_calls * 100.0, 2) if total_calls else 0.0,
+    }
+
+
+def _pricing_warnings(per_model_costs: list[dict[str, Any]]) -> list[str]:
+    warnings: list[str] = []
+    for row in per_model_costs:
+        unpriced = int(row.get("unpriced_calls", 0))
+        if unpriced > 0:
+            warnings.append(
+                f"pricing: {row['model']}: {unpriced} API call(s) unpriced (unknown or retired model)"
+            )
+        future_fallback = int(row.get("future_fallback_calls", 0))
+        if future_fallback > 0:
+            warnings.append(
+                f"pricing: {row['model']}: {future_fallback} API call(s) priced with future fallback (earliest later rate)"
+            )
+    return warnings
 
 
 def _build_per_model_costs(
@@ -290,19 +331,22 @@ def _build_per_model_costs(
         model_name = PricingLookup.build_lookup_key(call.provider_id, call.model_id)
         if not model_name:
             model_name = fallback_model
-        pricing = pricing_lookup.get_pricing(model_name)
+        resolution = pricing_lookup.resolve_call_pricing(model_name, call.timestamp_ms)
         context_tokens = call.input_tokens + call.cache_read_tokens + call.cache_write_tokens
         api_cost = call.cost
-        estimated_cost = estimate_session_cost_usd(
-            pricing,
-            input_tokens=call.input_tokens,
-            output_tokens=call.output_tokens,
-            reasoning_tokens=call.reasoning_tokens,
-            cache_read_tokens=call.cache_read_tokens,
-            cache_write_tokens=call.cache_write_tokens,
-            web_search_requests=call.web_search_requests,
-            context_tokens=context_tokens,
-        )
+        if resolution.pricing is not None:
+            estimated_cost = estimate_session_cost_usd(
+                resolution.pricing,
+                input_tokens=call.input_tokens,
+                output_tokens=call.output_tokens,
+                reasoning_tokens=call.reasoning_tokens,
+                cache_read_tokens=call.cache_read_tokens,
+                cache_write_tokens=call.cache_write_tokens,
+                web_search_requests=call.web_search_requests,
+                context_tokens=context_tokens,
+            )
+        else:
+            estimated_cost = 0.0
         row = grouped.get(model_name)
         if row is None:
             row = {
@@ -314,15 +358,27 @@ def _build_per_model_costs(
                 "generated_tokens": 0,
                 "api_cost": 0.0,
                 "estimated_cost": 0.0,
+                "priced_calls": 0,
+                "future_fallback_calls": 0,
+                "unpriced_calls": 0,
+                "provenances": [],
             }
             grouped[model_name] = row
-        row["tokens"] += call.input_tokens + call.output_tokens + call.cache_read_tokens + call.cache_write_tokens
+        row["tokens"] += call.input_tokens + call.output_tokens + call.reasoning_tokens + call.cache_read_tokens + call.cache_write_tokens
         row["input_tokens"] += call.input_tokens
         row["output_tokens"] += call.output_tokens
         row["reasoning_tokens"] += call.reasoning_tokens
         row["generated_tokens"] += call.output_tokens + call.reasoning_tokens
         row["api_cost"] += api_cost
         row["estimated_cost"] += estimated_cost
+        if resolution.pricing is not None:
+            row["priced_calls"] += 1
+            if resolution.status == "future_fallback":
+                row["future_fallback_calls"] += 1
+            if resolution.provenance and resolution.provenance not in row["provenances"]:
+                row["provenances"].append(resolution.provenance)
+        else:
+            row["unpriced_calls"] += 1
 
     rows: list[dict[str, Any]] = []
     for row in grouped.values():
@@ -349,6 +405,10 @@ def _build_per_model_costs(
                 "api_cost": round(api_cost, 6),
                 "estimated_cost": round(estimated_cost if api_cost <= 0 else 0.0, 6),
                 "cost": round(primary_cost, 6),
+                "priced_calls": int(row["priced_calls"]),
+                "future_fallback_calls": int(row["future_fallback_calls"]),
+                "unpriced_calls": int(row["unpriced_calls"]),
+                "pricing_provenance": "; ".join(str(item) for item in row["provenances"]),
             }
         )
     rows.sort(key=lambda x: (float(x["api_cost"]), float(x["estimated_cost"])), reverse=True)

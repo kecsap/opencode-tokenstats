@@ -7,7 +7,7 @@
     "sessions": 1,
     "api_calls": 1,
     "tokens": 184,
-    "api_cost": 0.000885
+    "api_cost": 0.012
   },
   "tokens": {
     "input": 120,
@@ -35,14 +35,23 @@
       }
     ]
   },
-  "warnings": [],
+  "warnings": [
+    "pricing: openai/gpt-5.3-codex: 1 API call(s) unpriced (unknown or retired model)"
+  ],
+  "pricing": {
+    "calls": 1,
+    "priced_calls": 0,
+    "future_fallback_calls": 0,
+    "unpriced_calls": 1,
+    "coverage_percent": 0.0
+  },
   "period_series": [
     {
       "date": "2026-05-01",
       "sessions": 1,
       "api_calls": 1,
       "tokens": 184,
-      "api_cost": 0.000885
+      "api_cost": 0.012
     }
   ],
   "projects": [],
@@ -56,21 +65,26 @@
       "reasoning_percent": 16.67,
       "api_cost": 0.012,
       "estimated_cost": 0.0,
-      "cost": 0.012
+      "cost": 0.012,
+      "priced_calls": 0,
+      "future_fallback_calls": 0,
+      "unpriced_calls": 1,
+      "pricing_provenance": "",
+      "pricing_status": "unpriced"
     }
   ],
   "by_activity": [
     {
-      "category": "general",
-      "label": "General",
+      "category": "exploration",
+      "label": "Exploration",
       "tokens": 184,
       "input_percent": 65.22,
       "output_percent": 21.74,
       "reasoning_tokens": 8,
       "reasoning_percent": 16.67,
       "calls": 1,
-      "api_cost": 0.0,
-      "estimated_cost": 0.000885
+      "api_cost": 0.012,
+      "estimated_cost": 0.0
     }
   ],
   "top_sessions": [
@@ -81,8 +95,15 @@
       "output_percent": 21.74,
       "reasoning_tokens": 8,
       "reasoning_percent": 16.67,
-      "api_cost": 0.0,
-      "estimated_cost": 0.000885
+      "api_cost": 0.012,
+      "estimated_cost": 0.0,
+      "pricing_coverage": {
+        "calls": 1,
+        "priced_calls": 0,
+        "future_fallback_calls": 0,
+        "unpriced_calls": 1,
+        "coverage_percent": 0.0
+      }
     }
   ],
   "trends": null

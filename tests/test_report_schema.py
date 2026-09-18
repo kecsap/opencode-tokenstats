@@ -59,6 +59,7 @@ def test_build_report_schema_blocks() -> None:
         "subagents",
         "context_estimates",
         "warnings",
+        "pricing",
         "period_series",
         "projects",
         "models",
@@ -206,10 +207,18 @@ def test_model_costs_merge_same_model_into_one_api_row_when_any_billed_cost_exis
     assert model["cost"] == 0.01
     assert model["tokens"] == 38
     assert model["reasoning_tokens"] == 1
-    assert model["reasoning_percent"] == 2.63
+    # reasoning_percent is reasoning / generated (output + reasoning) across the merge:
+    # 1 / (5 + 1) = 16.67 (metric_b's row carries no generated tokens)
+    assert model["reasoning_percent"] == 16.67
 
 
-def test_model_costs_use_estimated_for_unbilled_model_rows_in_mixed_sessions() -> None:
+def test_model_costs_use_estimated_for_unbilled_model_rows_in_mixed_sessions(tmp_path, monkeypatch) -> None:
+    # Isolate from any developer-local models.conf (alias mapping would rename
+    # the model key and change the aggregation under test).
+    alias_file = tmp_path / "models.conf"
+    alias_file.write_text("# no aliases\n", encoding="utf-8")
+    monkeypatch.setenv("OPTOKEN_MODEL_ALIAS_FILE", str(alias_file))
+
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = datetime(2026, 1, 2, tzinfo=UTC)
     report = build_report_schema(
@@ -250,3 +259,79 @@ def test_model_costs_use_estimated_for_unbilled_model_rows_in_mixed_sessions() -
     assert models["openai/gpt-5.4"]["api_cost"] == 12.34
     assert models["openai/gpt-5.4"]["estimated_cost"] == 0.0
     assert models["openai/gpt-5.4"]["cost"] == 12.34
+
+
+def test_report_exposes_pricing_coverage_status_and_provenance(tmp_path, monkeypatch) -> None:
+    alias_file = tmp_path / "models.conf"
+    alias_file.write_text("# no aliases\n", encoding="utf-8")
+    monkeypatch.setenv("OPTOKEN_MODEL_ALIAS_FILE", str(alias_file))
+
+    metric = CanonicalMetrics(
+        session_id="s-pricing",
+        model="openai/gpt-x",
+        input_tokens=100,
+        output_tokens=50,
+        reasoning_tokens=0,
+        cache_read_tokens=0,
+        session_total_tokens=150,
+        api_calls=3,
+        actual_cost_usd=0.0,
+        estimated_cost_usd=0.005,
+        token_composition={"input": 100, "cache_read": 0, "output": 50, "reasoning": 0},
+        component_rows=[],
+        component_family_rows=[],
+        core_rows=[],
+        tool_rows=[],
+        mcp_rows=[],
+        per_model_costs=[
+            {
+                "model": "openai/gpt-x",
+                "tokens": 150,
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "reasoning_tokens": 0,
+                "generated_tokens": 50,
+                "api_cost": 0.0,
+                "estimated_cost": 0.005,
+                "cost": 0.005,
+                "priced_calls": 2,
+                "future_fallback_calls": 1,
+                "unpriced_calls": 1,
+                "pricing_provenance": "https://example.com/old; https://example.com/new",
+            }
+        ],
+        pricing_coverage={
+            "calls": 3,
+            "priced_calls": 2,
+            "future_fallback_calls": 1,
+            "unpriced_calls": 1,
+            "coverage_percent": 66.67,
+        },
+    )
+
+    report = build_report_schema(
+        period="daily",
+        mode="local",
+        start=datetime(2026, 1, 1, tzinfo=UTC),
+        end=datetime(2026, 1, 2, tzinfo=UTC),
+        session_metrics=[metric],
+    )
+
+    assert report["pricing"] == {
+        "calls": 3,
+        "priced_calls": 2,
+        "future_fallback_calls": 1,
+        "unpriced_calls": 1,
+        "coverage_percent": 66.67,
+    }
+
+    model = {row["model"]: row for row in report["models"]}["openai/gpt-x"]
+    assert model["priced_calls"] == 2
+    assert model["future_fallback_calls"] == 1
+    assert model["unpriced_calls"] == 1
+    assert model["pricing_provenance"] == "https://example.com/old; https://example.com/new"
+    assert model["pricing_status"] == "future_fallback"
+
+    session_row = report["top_sessions"][0]
+    assert session_row["pricing_coverage"]["unpriced_calls"] == 1
+    assert session_row["pricing_coverage"]["coverage_percent"] == 66.67

@@ -413,6 +413,19 @@ def print_status_report(mode: str, sessions: list[dict[str, object]]) -> None:
     console.print(Panel(table, title="[bold]Status[/bold]", border_style=COL_CYAN))
 
 
+def _format_pricing_coverage(coverage: dict[str, Any] | None) -> str | None:
+    if not isinstance(coverage, dict):
+        return None
+    total = int(coverage.get("calls", 0) or 0)
+    if total <= 0:
+        return None
+    priced = int(coverage.get("priced_calls", 0) or 0)
+    unpriced = int(coverage.get("unpriced_calls", 0) or 0)
+    future_fallback = int(coverage.get("future_fallback_calls", 0) or 0)
+    percent = float(coverage.get("coverage_percent", 0.0) or 0.0)
+    return f"{percent:.2f}% ({priced} priced, {unpriced} unpriced, {future_fallback} future-fallback)"
+
+
 def print_session_report(
     session_id: str,
     api_calls: int,
@@ -425,12 +438,19 @@ def print_session_report(
     component_stats: dict[str, Any] | None = None,
     core_stats: dict[str, Any] | None = None,
     model_costs: list[dict[str, Any]] | None = None,
+    pricing_coverage: dict[str, Any] | None = None,
+    pricing_warnings: list[str] | None = None,
 ) -> None:
+    coverage_text = _format_pricing_coverage(pricing_coverage)
     if not RICH_AVAILABLE:
         print(f"Session: {session_id}")
         print(f"API calls: {_fmt_int(api_calls)}")
         print(f"Tokens: {_fmt_int(tokens)}")
         print(f"Cost (API): {_fmt_float(api_cost)}")
+        if coverage_text:
+            print(f"Pricing coverage: {coverage_text}")
+        for warning in pricing_warnings or []:
+            print(f"WARNING: {warning}")
         if token_composition:
             print(f"Token Composition: {token_composition}")
         if top_tools:
@@ -451,7 +471,11 @@ def print_session_report(
     table.add_row("API calls", _fmt_int(api_calls))
     table.add_row("Tokens", _fmt_int(tokens))
     table.add_row("Cost (API)", _fmt_float(api_cost))
+    if coverage_text:
+        table.add_row("Pricing", coverage_text)
     console.print(Panel(table, title="[bold]Session[/bold]", border_style=COL_GREEN))
+    for warning in pricing_warnings or []:
+        console.print(Text(f"WARNING: {warning}", style=COL_DIM))
 
     if token_composition:
         comp = _build_composition_table(token_composition, tokens)
@@ -575,6 +599,11 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         print(f"Tokens: {_fmt_int(report['tokens'])}")
         print(f"From: {_fmt_ts_local(report.get('from'))}")
         print(f"To: {_fmt_ts_local(report.get('to'))}")
+        coverage_text = _format_pricing_coverage(report.get("pricing"))
+        if coverage_text:
+            print(f"Pricing coverage: {coverage_text}")
+        for warning in report.get("warnings") or []:
+            print(f"WARNING: {warning}")
         if report.get("token_composition"):
             print(f"Token Composition: {report['token_composition']}")
         if report.get("top_tools"):
@@ -612,6 +641,9 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     summary_table.add_row("API calls", _fmt_int(report["api_calls"]))
     summary_table.add_row("From", _fmt_ts_local(report["from"]))
     summary_table.add_row("To", _fmt_ts_local(report["to"]))
+    coverage_text = _format_pricing_coverage(report.get("pricing"))
+    if coverage_text:
+        summary_table.add_row("Pricing", coverage_text)
 
     # Build Token Composition table with bars
     if token_composition and isinstance(token_composition, dict):
@@ -837,6 +869,9 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
     # External Tools at the bottom (not spanning full width)
     if top_tools_renderable:
         console.print(top_tools_renderable)
+
+    for warning in report.get("warnings") or []:
+        console.print(Text(f"WARNING: {warning}", style=COL_DIM))
 
     if isinstance(trends, dict):
         _print_trends(console, trends)

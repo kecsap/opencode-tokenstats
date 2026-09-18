@@ -90,6 +90,42 @@ def test_json_command_markdown(monkeypatch) -> None:
     assert "## Top Tools" in result.output
 
 
+def test_json_command_exposes_pricing_coverage(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["json", "--period", "daily"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    # No model ids in the fixture: every call is unpriced, never silently guessed.
+    assert payload["pricing"]["calls"] == 2
+    assert payload["pricing"]["priced_calls"] == 0
+    assert payload["pricing"]["unpriced_calls"] == 2
+    assert payload["pricing"]["coverage_percent"] == 0.0
+
+
+def test_session_command_shows_pricing_coverage_and_warnings(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["session", "--session-id", "s1"])
+    assert result.exit_code == 0
+    assert "Pricing" in result.output
+    assert "unpriced" in result.output
+    assert "pricing:" in result.output
+
+
+def test_period_report_shows_pricing_coverage_and_warnings(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["daily"])
+    assert result.exit_code == 0
+    assert "Pricing" in result.output
+    assert "unpriced" in result.output
+    assert "pricing:" in result.output
+
+
 def test_lifetime_command(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
     monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))

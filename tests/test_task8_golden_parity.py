@@ -15,7 +15,13 @@ def _load_json(name: str):
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
-def test_golden_report_schema_parity() -> None:
+def test_golden_report_schema_parity(tmp_path, monkeypatch) -> None:
+    # Isolate from any developer-local models.conf so alias/local-model
+    # detection is deterministic for the golden comparison.
+    alias_file = tmp_path / "models.conf"
+    alias_file.write_text("# no aliases\n", encoding="utf-8")
+    monkeypatch.setenv("OPTOKEN_MODEL_ALIAS_FILE", str(alias_file))
+
     messages = _load_json("session_messages_api_sample.json")
     golden = _load_json("golden_report_daily.json")
 

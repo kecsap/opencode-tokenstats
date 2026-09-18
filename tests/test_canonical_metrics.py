@@ -119,7 +119,8 @@ def test_canonical_metrics_reads_data_and_part_model_shapes() -> None:
     out = build_canonical_metrics("s-data", messages)
     assert out.model == "openai/gpt-a"
     assert out.per_model_costs[0]["model"] == "openai/gpt-a"
-    assert out.per_model_costs[0]["tokens"] == 6
+    # Row tokens include reasoning, same as session/activity totals
+    assert out.per_model_costs[0]["tokens"] == 7
 
 
 def test_local_model_has_zero_api_cost(tmp_path) -> None:
@@ -171,7 +172,10 @@ def test_local_model_cost_is_zero(tmp_path) -> None:
         out = build_canonical_metrics("s-local", messages)
         assert out.model == "myollama/qwen3.6:35b-yarn"
         assert out.actual_cost_usd == 0.0  # API cost should be 0 for local models
-        assert out.estimated_cost_usd > 0  # Estimated cost should be calculated
+        # Local model has no pricing record: reported unpriced instead of guessed
+        assert out.estimated_cost_usd == 0.0
+        assert out.pricing_coverage["unpriced_calls"] == 1
+        assert any(w.startswith("pricing:") for w in out.warnings)
     finally:
         if old_env is None:
             os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)
@@ -912,3 +916,113 @@ def test_additional_core_components_classification() -> None:
     mcp_names = {r["name"] for r in out.mcp_rows}
     assert "webfetch" not in mcp_names
     assert "invalid" not in mcp_names
+
+
+def _two_period_history_lookup():
+    from opencode_tokenstats.pricing import PricingLookup, _parse_pricing_history
+
+    payload = {
+        "schema_version": 1,
+        "unit": "USD per 1M tokens",
+        "records": [
+            {
+                "provider": "openai",
+                "model": "gpt-x",
+                "aliases": ["openai/gpt-x", "gpt-x"],
+                "service_profile": "standard",
+                "context": "short",
+                "effective_from": "2026-01-01T00:00:00Z",
+                "effective_to": "2026-06-01T00:00:00Z",
+                "status": "active",
+                "confidence": "observed",
+                "source": {"url": "https://example.com/old", "retrieved_at": "2026-01-01T00:00:00Z"},
+                "rates": {"input": 1.0, "output": 2.0},
+            },
+            {
+                "provider": "openai",
+                "model": "gpt-x",
+                "aliases": ["openai/gpt-x", "gpt-x"],
+                "service_profile": "standard",
+                "context": "short",
+                "effective_from": "2026-06-01T00:00:00Z",
+                "effective_to": None,
+                "status": "active",
+                "confidence": "observed",
+                "source": {"url": "https://example.com/new", "retrieved_at": "2026-06-01T00:00:00Z"},
+                "rates": {"input": 4.0, "output": 8.0},
+            },
+        ]
+    }
+    data, history = _parse_pricing_history(payload)
+    return PricingLookup(data, history, flat_keys=frozenset())
+
+
+def test_estimated_cost_uses_call_time_pricing_periods(monkeypatch) -> None:
+    import pytest
+
+    from opencode_tokenstats import canonical_metrics
+
+    monkeypatch.setattr(canonical_metrics, "build_default_pricing_lookup", _two_period_history_lookup)
+
+    def step_finish(timestamp: int) -> dict[str, object]:
+        return {
+            "type": "step-finish",
+            "tokens": {"input": 1000, "output": 500, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+            "cost": 0,
+            "timestamp": timestamp,
+        }
+
+    messages = [
+        {
+            "role": "assistant",
+            "info": {"providerID": "openai", "modelID": "gpt-x"},
+            "parts": [step_finish(1772668800000)],  # 2026-03-05, first period
+        },
+        {
+            "role": "assistant",
+            "info": {"providerID": "openai", "modelID": "gpt-x"},
+            "parts": [step_finish(1783209600000)],  # 2026-07-05, second period
+        },
+    ]
+
+    out = build_canonical_metrics("s-periods", messages)
+    # First period: (1000*1 + 500*2) / 1M = 0.002; second: (1000*4 + 500*8) / 1M = 0.008
+    assert out.estimated_cost_usd == pytest.approx(0.01)
+    row = out.per_model_costs[0]
+    assert row["model"] == "openai/gpt-x"
+    assert row["priced_calls"] == 2
+    assert row["unpriced_calls"] == 0
+    assert row["pricing_provenance"] == "https://example.com/old; https://example.com/new"
+    assert out.pricing_coverage["calls"] == 2
+    assert out.pricing_coverage["priced_calls"] == 2
+    assert out.pricing_coverage["coverage_percent"] == 100.0
+
+
+def test_unknown_model_usage_is_unpriced_not_guessed() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-zz-never-seen",
+                "tokens": {"input": 100, "output": 50, "reasoning": 5, "cache": {"read": 10, "write": 0}},
+                "cost": 0,
+            },
+            "parts": [{"type": "text", "text": "ok"}],
+        }
+    ]
+
+    out = build_canonical_metrics("s-unpriced", messages)
+    assert out.actual_cost_usd == 0.0
+    assert out.estimated_cost_usd == 0.0
+    row = out.per_model_costs[0]
+    assert row["priced_calls"] == 0
+    assert row["unpriced_calls"] == 1
+    assert row["pricing_provenance"] == ""
+    assert out.pricing_coverage == {
+        "calls": 1,
+        "priced_calls": 0,
+        "future_fallback_calls": 0,
+        "unpriced_calls": 1,
+        "coverage_percent": 0.0,
+    }
+    assert any(w.startswith("pricing:") for w in out.warnings)

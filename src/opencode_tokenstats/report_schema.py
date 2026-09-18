@@ -48,11 +48,27 @@ def build_report_schema(
     }
 
     tools: dict[str, dict[str, int]] = {}
-    models: dict[str, dict[str, float]] = {}
+    models: dict[str, dict[str, Any]] = {}
     components: dict[tuple[str, str, str], int] = {}
     skills: dict[str, int] = {}
     subagents: dict[str, int] = {}
     warnings: list[str] = []
+    pricing_coverage = {"calls": 0, "priced_calls": 0, "future_fallback_calls": 0, "unpriced_calls": 0}
+
+    def _new_model_entry() -> dict[str, Any]:
+        return {
+            "api_cost": 0.0,
+            "estimated_cost": 0.0,
+            "tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "generated_tokens": 0,
+            "priced_calls": 0,
+            "future_fallback_calls": 0,
+            "unpriced_calls": 0,
+            "provenances": [],
+        }
 
     aliases = load_model_aliases(model_alias_file)
     for m in session_metrics:
@@ -64,15 +80,7 @@ def build_report_schema(
             for row in per_model_costs:
                 model_key = resolve_alias(str(row.get("model", m.model)), aliases)
                 if model_key not in models:
-                    models[model_key] = {
-                        "api_cost": 0.0,
-                        "estimated_cost": 0.0,
-                        "tokens": 0,
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "reasoning_tokens": 0,
-                        "generated_tokens": 0,
-                    }
+                    models[model_key] = _new_model_entry()
                 models[model_key]["api_cost"] = round(models[model_key]["api_cost"] + float(row.get("api_cost", 0.0)), 6)
                 models[model_key]["estimated_cost"] = round(
                     models[model_key]["estimated_cost"] + float(row.get("estimated_cost", 0.0)), 6
@@ -82,24 +90,26 @@ def build_report_schema(
                 models[model_key]["output_tokens"] += int(row.get("output_tokens", 0))
                 models[model_key]["reasoning_tokens"] += int(row.get("reasoning_tokens", 0))
                 models[model_key]["generated_tokens"] += int(row.get("generated_tokens", 0))
+                models[model_key]["priced_calls"] += int(row.get("priced_calls", 0))
+                models[model_key]["future_fallback_calls"] += int(row.get("future_fallback_calls", 0))
+                models[model_key]["unpriced_calls"] += int(row.get("unpriced_calls", 0))
+                provenance = str(row.get("pricing_provenance", ""))
+                if provenance and provenance not in models[model_key]["provenances"]:
+                    models[model_key]["provenances"].append(provenance)
         else:
             model_key = resolve_alias(m.model, aliases)
             if model_key not in models:
-                models[model_key] = {
-                    "api_cost": 0.0,
-                    "estimated_cost": 0.0,
-                    "tokens": 0,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "reasoning_tokens": 0,
-                    "generated_tokens": 0,
-                }
+                models[model_key] = _new_model_entry()
             models[model_key]["estimated_cost"] = round(models[model_key]["estimated_cost"] + m.estimated_cost_usd, 6)
             models[model_key]["tokens"] += m.session_total_tokens
             models[model_key]["input_tokens"] += m.input_tokens
             models[model_key]["output_tokens"] += m.output_tokens
             models[model_key]["reasoning_tokens"] += m.reasoning_tokens
             models[model_key]["generated_tokens"] += m.output_tokens + m.reasoning_tokens
+        session_coverage = getattr(m, "pricing_coverage", None)
+        if isinstance(session_coverage, dict):
+            for key in pricing_coverage:
+                pricing_coverage[key] += int(session_coverage.get(key, 0) or 0)
 
         for row in m.tool_rows:
             name = str(row["tool"])
@@ -136,6 +146,19 @@ def build_report_schema(
         output_tokens = int(costs["output_tokens"])
         reasoning_tokens = int(costs["reasoning_tokens"])
         generated_tokens = int(costs["generated_tokens"])
+        priced_calls = int(costs["priced_calls"])
+        future_fallback_calls = int(costs["future_fallback_calls"])
+        unpriced_calls = int(costs["unpriced_calls"])
+        if priced_calls + future_fallback_calls + unpriced_calls == 0:
+            pricing_status = "unknown"
+        elif priced_calls == 0:
+            pricing_status = "unpriced"
+        elif future_fallback_calls > 0:
+            pricing_status = "future_fallback"
+        elif unpriced_calls > 0:
+            pricing_status = "unpriced"
+        else:
+            pricing_status = "active"
         model_rows.append(
             {
                 "model": k,
@@ -147,6 +170,11 @@ def build_report_schema(
                 "api_cost": round(api_cost, 6),
                 "estimated_cost": round(estimated_cost, 6),
                 "cost": round(primary_cost, 6),
+                "priced_calls": priced_calls,
+                "future_fallback_calls": future_fallback_calls,
+                "unpriced_calls": unpriced_calls,
+                "pricing_provenance": "; ".join(str(item) for item in costs["provenances"]),
+                "pricing_status": pricing_status,
             }
         )
     model_rows.sort(key=lambda x: x["cost"], reverse=True)
@@ -218,6 +246,7 @@ def build_report_schema(
                 "reasoning_percent": round(m.reasoning_tokens / (m.output_tokens + m.reasoning_tokens) * 100.0, 2) if m.output_tokens + m.reasoning_tokens else 0.0,
                 "api_cost": round(m.actual_cost_usd, 6),
                 "estimated_cost": round(m.estimated_cost_usd, 6),
+                "pricing_coverage": getattr(m, "pricing_coverage", None) or {},
             }
         )
 
@@ -247,6 +276,17 @@ def build_report_schema(
         session_dirs=session_dirs or {},
     )
 
+    pricing_calls = pricing_coverage["calls"]
+    pricing = {
+        "calls": pricing_calls,
+        "priced_calls": pricing_coverage["priced_calls"],
+        "future_fallback_calls": pricing_coverage["future_fallback_calls"],
+        "unpriced_calls": pricing_coverage["unpriced_calls"],
+        "coverage_percent": (
+            round(pricing_coverage["priced_calls"] / pricing_calls * 100.0, 2) if pricing_calls else 0.0
+        ),
+    }
+
     return {
         "overview": {
             "period": period,
@@ -267,6 +307,7 @@ def build_report_schema(
             "components": component_rows,
         },
         "warnings": warnings,
+        "pricing": pricing,
         "period_series": period_series,
         "projects": [],
         "models": model_rows,
@@ -286,6 +327,15 @@ def report_to_markdown(report: dict[str, Any]) -> str:
         f"- API calls: {overview.get('api_calls')}",
         f"- Tokens: {overview.get('tokens')}",
         f"- API cost: {overview.get('api_cost')}",
+    ]
+    pricing = report.get("pricing")
+    if isinstance(pricing, dict) and pricing.get("calls"):
+        lines.append(
+            f"- Pricing coverage: {pricing.get('coverage_percent', 0.0)}% "
+            f"({pricing.get('priced_calls', 0)} priced, {pricing.get('unpriced_calls', 0)} unpriced, "
+            f"{pricing.get('future_fallback_calls', 0)} future-fallback)"
+        )
+    lines += [
         "",
         "## Top Tools",
     ]

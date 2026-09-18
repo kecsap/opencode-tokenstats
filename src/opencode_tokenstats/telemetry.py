@@ -105,6 +105,7 @@ def summarize_telemetry(calls: list[TelemetryCall]) -> TelemetrySummary:
         total_tokens=(
             input_tokens
             + output_tokens
+            + reasoning_tokens
             + cache_read_tokens
             + cache_write_tokens
         ),
