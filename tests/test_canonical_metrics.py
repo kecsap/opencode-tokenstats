@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from opencode_tokenstats.canonical_metrics import build_canonical_metrics, _build_component_family_rows, _pricing_warnings
 from opencode_tokenstats.content_attribution import collect_content_attribution
 
@@ -39,6 +41,34 @@ def test_build_canonical_metrics_basic_semantics() -> None:
     assert out.tool_rows[0]["tool"] == "lean-ctx_ctx_search"
     assert out.component_rows[0]["component_group"] == "lean-ctx"
     assert out.mcp_rows[0]["name"] == "lean-ctx"
+
+
+def test_canonical_metrics_resolves_each_call_once(monkeypatch) -> None:
+    from opencode_tokenstats.pricing import PricingLookup
+
+    calls = 0
+    original = PricingLookup.resolve_call_pricing
+
+    def resolve_once(self, model_name, timestamp_ms=None):
+        nonlocal calls
+        calls += 1
+        return original(self, model_name, timestamp_ms)
+
+    monkeypatch.setattr(PricingLookup, "resolve_call_pricing", resolve_once)
+    out = build_canonical_metrics("s-reuse", [{
+        "role": "assistant",
+        "info": {
+            "providerID": "openai",
+            "modelID": "gpt-5.3-codex",
+            "tokens": {"input": 10, "output": 5, "reasoning": 1, "cache": {"read": 2, "write": 0}},
+            "cost": 0.0,
+        },
+        "parts": [{"type": "text", "text": "ok"}],
+    }])
+
+    assert calls == 1
+    assert out.estimated_cost_usd == pytest.approx(out.per_model_costs[0]["estimated_cost"])
+    assert out.activity_rows[0]["estimated_cost"] == out.estimated_cost_usd
 
 
 def test_canonical_metrics_exposes_tier_coverage(monkeypatch, tmp_path) -> None:

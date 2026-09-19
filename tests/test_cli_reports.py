@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
 from pathlib import Path
+import sys
+from datetime import UTC, datetime
 from click.testing import CliRunner
 import pytest
 
 from opencode_tokenstats import cli
+from opencode_tokenstats import pricing
 
 
 @pytest.fixture(autouse=True)
@@ -123,6 +127,58 @@ def test_period_report_shows_pricing_coverage_and_warnings(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Pricing" in result.output
     assert "unpriced" in result.output
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="fork preload coverage is Linux-specific")
+def test_period_collection_preloads_pricing_before_fork_and_reuses_lookup(monkeypatch, tmp_path) -> None:
+    pricing_file = tmp_path / "pricing.json"
+    pricing_file.write_text('{"default": {"input": 1, "output": 3}}', encoding="utf-8")
+    monkeypatch.setenv("OPENCODE_MODEL_PRICING_FILE", str(pricing_file))
+    pricing.reset_pricing_lookup_cache()
+
+    parse_count = mp.Value("i", 0)
+    original_parse = pricing._parse_flat_pricing
+
+    def counted_parse(payload):
+        with parse_count.get_lock():
+            parse_count.value += 1
+        return original_parse(payload)
+
+    monkeypatch.setattr(pricing, "_parse_flat_pricing", counted_parse)
+    sessions = _sessions()
+    monkeypatch.setattr(cli, "_list_sessions", lambda _options: sessions)
+    monkeypatch.setattr(cli.LocalSessionService, "find_database_path", lambda _path: tmp_path / "db.sqlite")
+    monkeypatch.setattr(
+        cli.LocalSessionService,
+        "get_period_messages",
+        lambda _service, _start, _end, *, session_ids=None: {
+            session["id"]: _messages(session["id"])
+            for session in sessions
+            if session_ids is None or session["id"] in session_ids
+        },
+    )
+    monkeypatch.setattr(cli.os, "cpu_count", lambda: 2)
+
+    metrics = cli._collect_period_session_metrics(
+        {"mode": "local", "db_path": None, "model_alias_file": None, "session_filter": None, "model_filter": None},
+        datetime.fromtimestamp(1_699_000_000, UTC),
+        datetime.fromtimestamp(1_701_000_000, UTC),
+    )
+
+    assert parse_count.value == 1
+    assert sorted(metric.session_id for metric in metrics) == ["s1", "s2"]
+    assert [
+        (
+            metric.api_calls,
+            metric.input_tokens,
+            metric.output_tokens,
+            metric.reasoning_tokens,
+            metric.cache_read_tokens,
+            metric.actual_cost_usd,
+            metric.pricing_coverage["calls"],
+        )
+        for metric in sorted(metrics, key=lambda item: item.session_id)
+    ] == [(1, 10, 5, 1, 2, 0.01, 1)] * 2
 
 
 def test_lifetime_command(monkeypatch) -> None:

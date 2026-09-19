@@ -10,6 +10,7 @@ from opencode_tokenstats.pricing import (
     canonical_model_keys,
     estimate_session_cost_usd,
     load_pricing_lookup,
+    reset_pricing_lookup_cache,
     tier_applicability,
 )
 from opencode_tokenstats.pricing import _parse_pricing_history
@@ -106,6 +107,21 @@ def test_explicit_flat_pricing_file_overrides_history(tmp_path, monkeypatch) -> 
 
     pricing = load_pricing_lookup().get_pricing("openai/gpt-5.6-terra")
     assert (pricing.input, pricing.output, pricing.cache_read) == (9, 8, 7)
+
+
+def test_pricing_lookup_is_cached_until_reset(tmp_path, monkeypatch) -> None:
+    pricing_file = tmp_path / "pricing.json"
+    pricing_file.write_text('{"openai/gpt-5.6-terra": {"input": 9, "output": 8}}')
+    monkeypatch.setenv("OPENCODE_MODEL_PRICING_FILE", str(pricing_file))
+    reset_pricing_lookup_cache()
+
+    first = load_pricing_lookup()
+    pricing_file.write_text('{"openai/gpt-5.6-terra": {"input": 1, "output": 2}}')
+    assert load_pricing_lookup() is first
+    assert load_pricing_lookup().get_pricing("openai/gpt-5.6-terra").input == 9
+
+    reset_pricing_lookup_cache()
+    assert load_pricing_lookup().get_pricing("openai/gpt-5.6-terra").input == 1
 
 
 def test_pricing_exact_normalized_and_prefix_fallback() -> None:
@@ -486,6 +502,94 @@ def test_resolve_call_pricing_history_wins_over_derived_flat_snapshot() -> None:
     resolution = lookup.resolve_call_pricing("openai/gpt-x", _ms("2026-03-15T00:00:00Z"))
     assert resolution.status == "active"
     assert resolution.provenance == "https://example.com/old"
+
+
+def test_resolve_call_pricing_index_matches_repeated_alias_and_provider_lookups() -> None:
+    payload = _two_period_payload()
+    payload["records"].extend([
+        {
+            "provider": "openai", "model": "gpt-official", "aliases": ["gpt-official"],
+            "service_profile": "standard", "context": "short",
+            "effective_from": "2026-01-01T00:00:00Z", "effective_to": None,
+            "status": "active", "confidence": "observed",
+            "source": {"url": "catalog-official", "retrieved_at": "2026-01-01T00:00:00Z"},
+            "rates": {"input": 1.0, "output": 2.0},
+        },
+        {
+            "provider": "openai", "model": "gpt-official", "aliases": ["gpt-official"],
+            "service_profile": "standard", "context": "short",
+            "effective_from": "2026-01-01T00:00:00Z", "effective_to": None,
+            "status": "active", "confidence": "official",
+            "source": {
+                "url": "provider-official", "retrieved_at": "2026-01-02T00:00:00Z",
+                "kind": "provider_official",
+            },
+            "rates": {"input": 3.0, "output": 4.0},
+        },
+        {
+            "provider": "openai", "model": "gpt-tiered", "aliases": ["gpt-tiered"],
+            "service_profile": "standard", "context": "short",
+            "effective_from": "2026-01-01T00:00:00Z", "effective_to": None,
+            "status": "active", "confidence": "observed",
+            "source": {"url": "tiered", "retrieved_at": "2026-01-01T00:00:00Z"},
+            "rates": {
+                "input": 5.0, "output": 6.0, "cacheRead": 1.0,
+                "tiers": [{"input": 7.0, "output": 8.0, "cacheRead": 2.0, "cacheWrite": 3.0, "threshold": 200000}],
+            },
+        },
+    ])
+    data, history = _parse_pricing_history(payload)
+    data["openai/gpt-prefix"] = ModelPricing(input=9.0, output=10.0, cache_read=0.0)
+    lookup = PricingLookup(data, history, flat_keys=frozenset({"openai/gpt-prefix"}))
+
+    def assert_same_resolution(model_names: tuple[str, ...], timestamp: int | None) -> None:
+        expected = lookup.resolve_call_pricing(model_names[0], timestamp)
+        for model_name in model_names[1:]:
+            assert lookup.resolve_call_pricing(model_name, timestamp) == expected
+
+    historical = lookup.resolve_call_pricing("openai/gpt-x", _ms("2026-03-15T00:00:00Z"))
+    assert_same_resolution(("openai/gpt-x", "gpt-x", "azure/gpt-x"), _ms("2026-03-15T00:00:00Z"))
+    assert historical.status == "active"
+    assert historical.provenance == "https://example.com/old"
+    assert (historical.effective_from, historical.effective_to) == (
+        "2026-01-01T00:00:00Z", "2026-06-01T00:00:00Z"
+    )
+    assert historical.pricing is not None and historical.pricing.input == 1.0
+
+    prefix = lookup.resolve_call_pricing("openai/gpt-prefix-v2", _ms("2026-03-15T00:00:00Z"))
+    assert_same_resolution(("openai/gpt-prefix-v2",), _ms("2026-03-15T00:00:00Z"))
+    assert prefix.status == "flat_override"
+    assert prefix.provenance == "flat:openai/gpt-prefix"
+
+    future = lookup.resolve_call_pricing("gpt-x", _ms("2025-12-01T00:00:00Z"))
+    assert_same_resolution(("gpt-x", "openai/gpt-x"), _ms("2025-12-01T00:00:00Z"))
+    assert future.status == "future_fallback"
+    assert future.provenance == "https://example.com/old"
+    assert (future.effective_from, future.effective_to) == (
+        "2026-01-01T00:00:00Z", "2026-06-01T00:00:00Z"
+    )
+
+    retired = lookup.resolve_call_pricing("openai/gpt-y", _ms("2026-03-15T00:00:00Z"))
+    assert_same_resolution(("openai/gpt-y", "gpt-y"), _ms("2026-03-15T00:00:00Z"))
+    assert (retired.status, retired.provenance, retired.effective_from, retired.effective_to) == (
+        "default_fallback", "default", None, None
+    )
+
+    official = lookup.resolve_call_pricing("gpt-official", _ms("2026-03-15T00:00:00Z"))
+    assert_same_resolution(("gpt-official", "openai/gpt-official"), _ms("2026-03-15T00:00:00Z"))
+    assert official.status == "active"
+    assert official.provenance == "provider-official"
+    assert official.effective_from == "2026-01-01T00:00:00Z"
+    assert official.effective_to is None
+    assert official.pricing is not None and official.pricing.input == 3.0
+
+    tiered = lookup.resolve_call_pricing("gpt-tiered", _ms("2026-03-15T00:00:00Z"))
+    assert_same_resolution(("gpt-tiered", "openai/gpt-tiered"), _ms("2026-03-15T00:00:00Z"))
+    assert tiered.status == "active"
+    assert tiered.provenance == "tiered"
+    assert tiered.pricing is not None
+    assert (tiered.pricing.input, tiered.pricing.output) == (5.0, 6.0)
+    assert tiered.pricing.tiers == (ContextPricing(input=7.0, output=8.0, cache_read=2.0, cache_write=3.0, threshold=200000),)
 
 
 def test_resolve_call_pricing_keeps_standard_and_fast_rates_separate() -> None:

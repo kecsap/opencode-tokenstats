@@ -44,6 +44,7 @@ if __package__ in {None, ""}:
         resolve_alias,
         write_pricing_ledger,
     )
+    from opencode_tokenstats.cost import build_default_pricing_lookup
     from opencode_tokenstats.models_dev import (
         DEFAULT_MODELS_DEV_HISTORY_URL,
         DEFAULT_MODELS_DEV_URL,
@@ -75,6 +76,7 @@ else:
         resolve_alias,
         write_pricing_ledger,
     )
+    from .cost import build_default_pricing_lookup
     from .models_dev import (
         DEFAULT_MODELS_DEV_HISTORY_URL,
         DEFAULT_MODELS_DEV_URL,
@@ -1182,6 +1184,9 @@ def _collect_period_session_metrics(
         return out
     if progress_callback:
         progress_callback(0, eligible_count)
+
+    # Preload pricing before workers so fork workers inherit the parsed lookup.
+    build_default_pricing_lookup()
 
     # Build canonical metrics in parallel across CPU cores.
     worker_count = min(len(results), max(os.cpu_count() or 1, 1))

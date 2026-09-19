@@ -205,6 +205,28 @@ class PricingLookup:
         if flat_keys is None:
             flat_keys = frozenset(pricing_data.keys())
         self.flat_keys = frozenset(key.lower() for key in flat_keys)
+        history_index: dict[str, list[PricingRecord]] = {}
+        history_intervals: dict[int, tuple[datetime, datetime | None]] = {}
+        history_order: dict[int, int] = {}
+        for index, record in enumerate(history):
+            start = datetime.fromisoformat(record.effective_from.replace("Z", "+00:00"))
+            end = (
+                datetime.fromisoformat(record.effective_to.replace("Z", "+00:00"))
+                if record.effective_to is not None
+                else None
+            )
+            history_intervals[id(record)] = (start, end)
+            history_order[id(record)] = index
+            keys = {
+                f"{record.provider.lower()}/{record.model.lower()}",
+                record.model.lower(),
+                *(alias.lower() for alias in record.aliases),
+            }
+            for key in keys:
+                history_index.setdefault(key, []).append(record)
+        self._history_index = {key: tuple(records) for key, records in history_index.items()}
+        self._history_intervals = history_intervals
+        self._history_order = history_order
 
     @staticmethod
     def build_lookup_key(provider_id: str | None, model_id: str | None) -> str:
@@ -304,16 +326,11 @@ class PricingLookup:
         return PricingResolution(pricing=None, status="unpriced", provenance="")
 
     def _match_history_record(self, raw_name: str, timestamp_ms: int | None) -> tuple[PricingRecord | None, str]:
-        candidate_keys = set(canonical_model_keys(raw_name))
-        matched: list[PricingRecord] = []
-        for record in self.history:
-            record_keys = {
-                f"{record.provider.lower()}/{record.model.lower()}",
-                record.model.lower(),
-            }
-            record_keys.update(alias.lower() for alias in record.aliases)
-            if candidate_keys & record_keys:
-                matched.append(record)
+        matched_by_id: dict[int, PricingRecord] = {}
+        for key in canonical_model_keys(raw_name):
+            for record in self._history_index.get(key, ()):
+                matched_by_id[id(record)] = record
+        matched = sorted(matched_by_id.values(), key=lambda record: self._history_order[id(record)])
         if not matched:
             return None, "unpriced"
 
@@ -326,17 +343,25 @@ class PricingLookup:
         if moment is None:
             return None, "unpriced"
 
-        active = [record for record in matched if _interval_contains(record, moment)]
+        active = [
+            record
+            for record in matched
+            if self._history_intervals[id(record)][0] <= moment
+            and (self._history_intervals[id(record)][1] is None or moment < self._history_intervals[id(record)][1])
+        ]
         if active:
-            return max(active, key=lambda record: (_source_priority(record), _record_start(record))), "active"
+            return max(
+                active,
+                key=lambda record: (_source_priority(record), self._history_intervals[id(record)][0]),
+            ), "active"
 
         later = [
             record
             for record in matched
-            if _record_start(record) > moment and record.source_kind.lower() != "models.dev"
+            if self._history_intervals[id(record)][0] > moment and record.source_kind.lower() != "models.dev"
         ]
         if later:
-            return min(later, key=lambda record: _record_start(record)), "future_fallback"
+            return min(later, key=lambda record: self._history_intervals[id(record)][0]), "future_fallback"
 
         return None, "unpriced"
 
@@ -445,9 +470,22 @@ def canonical_model_keys(model: str) -> list[str]:
     return out
 
 
+_PRICING_LOOKUP_CACHE: tuple[str | None, PricingLookup] | None = None
+
+
+def reset_pricing_lookup_cache() -> None:
+    global _PRICING_LOOKUP_CACHE
+    _PRICING_LOOKUP_CACHE = None
+
+
 def load_pricing_lookup() -> PricingLookup:
+    global _PRICING_LOOKUP_CACHE
+    cache_key = os.environ.get("OPENCODE_MODEL_PRICING_FILE")
+    if _PRICING_LOOKUP_CACHE is not None and _PRICING_LOOKUP_CACHE[0] == cache_key:
+        return _PRICING_LOOKUP_CACHE[1]
+
     candidates: list[Path] = []
-    env = os.environ.get("OPENCODE_MODEL_PRICING_FILE")
+    env = cache_key
     if env:
         candidates.append(Path(os.path.expanduser(os.path.expandvars(env))))
 
@@ -464,7 +502,9 @@ def load_pricing_lookup() -> PricingLookup:
                 continue
             data = _parse_flat_pricing(payload)
             data.setdefault("default", ModelPricing(input=1.0, output=3.0, cache_read=0.0, cache_write=0.0, web_search=0.0, fast_multiplier=1.0))
-            return PricingLookup(data, flat_keys=frozenset(data.keys()))
+            lookup = PricingLookup(data, flat_keys=frozenset(data.keys()))
+            _PRICING_LOOKUP_CACHE = (cache_key, lookup)
+            return lookup
         except Exception:
             continue
 
@@ -472,9 +512,13 @@ def load_pricing_lookup() -> PricingLookup:
         payload = json.loads(files("opencode_tokenstats").joinpath("data/pricing-history.json").read_text(encoding="utf-8"))
         data, history = _parse_pricing_history(payload)
         data.setdefault("default", _default_pricing())
-        return PricingLookup(data, history, flat_keys=frozenset())
+        lookup = PricingLookup(data, history, flat_keys=frozenset())
+        _PRICING_LOOKUP_CACHE = (cache_key, lookup)
+        return lookup
     except Exception:
-        return PricingLookup({"default": _default_pricing()}, flat_keys=frozenset())
+        lookup = PricingLookup({"default": _default_pricing()}, flat_keys=frozenset())
+        _PRICING_LOOKUP_CACHE = (cache_key, lookup)
+        return lookup
 
 
 def _default_pricing() -> ModelPricing:
