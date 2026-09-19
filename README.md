@@ -129,6 +129,8 @@ If you know [CodeBurn](https://github.com/getagentseal/codeburn), the goal is si
 | `pricing status` | Inspect ledger records, Fast aliases, and coverage gaps |
 | `pricing import <source> --target <path>` | Merge reviewed dated records into the ledger |
 | `pricing refresh --target <path>` | Propose dated records from the official OpenAI pricing page |
+| `pricing snapshot --target <path>` | Preview or write the current all-provider models.dev snapshot |
+| `pricing backfill <manifest> --target <path>` | Propose dated records from pinned models.dev Git revisions |
 
 ### Global options
 
@@ -188,7 +190,7 @@ Load order:
 
 ## Pricing ledger
 
-Report costs come from a tracked historical ledger (`src/opencode_tokenstats/data/pricing-history.json`), not from live price lookups. Each record pins a rate to an effective period and the source where it was observed, so historical rates stay reviewable and reproducible.
+Report costs come from a tracked historical ledger (`src/opencode_tokenstats/data/pricing-history.json`), not from live price lookups. Each record pins a rate to an effective period and the source where it was observed, so historical rates stay reviewable and reproducible. Ledger records can come from official provider pricing or models.dev catalog observations; official-provider records take precedence when both cover the same model and period.
 
 ### Maintaining rates
 
@@ -201,26 +203,35 @@ octoken pricing import reviewed-rates.json --target my-ledger.json --yes
 
 # fetch the official OpenAI pricing page and propose dated records
 octoken pricing refresh --effective-from 2026-09-18 --target my-ledger.json --yes
+
+# collect the current all-provider models.dev catalog (preview unless --yes)
+octoken pricing snapshot --target my-ledger.json --yes
+
+# reconstruct historical records from reviewed, pinned models.dev revisions
+octoken pricing backfill models-dev-history.json --target my-ledger.json --yes
 ```
 
 - `pricing status` lists every record with its status (active/retired), effective period, source URL, retrieval time, and confidence, plus Fast aliases and coverage gaps. `--ledger` points it at any ledger file.
-- `import` and `refresh` are preview-only unless you pass `--yes`; writes always go to the explicit `--target` path, never to the bundled ledger.
+- `import`, `refresh`, and `backfill` are preview-only unless you pass `--yes`; writes always go to the explicit `--target` path, never to the bundled ledger. `snapshot` also previews unless `--yes` is passed.
+- `snapshot` fetches the current models.dev catalog, records its URL, retrieval time, catalog revision, and `source.kind: "models.dev"`, then validates the complete schema before writing. It describes current catalog observations, not historical prices.
 - A failed fetch or validation leaves the ledger unchanged.
 - `refresh` only accepts official OpenAI https URLs (`openai.com` or `*.openai.com`); no third-party scrapers are supported. `--effective-from` (default: today UTC) stamps the proposed records.
+- `backfill` requires a JSON list (or `{"revisions": [...]}`) of `{ "revision": "<40-char SHA>", "effective_from": "YYYY-MM-DD" }` entries. It is preview-only without `--yes`, and each catalog is fetched at its pinned revision.
 
 ### Merge rules
 
 - A record's identity is `provider` + `model` + `service_profile`; a model ID ending in `-fast` gets its own `fast` record, all others are `standard`.
 - Updates are append-only: a new rate closes the open record for that identity at the new `effective_from` and adds a new record. Existing history is never rewritten or deleted.
 - A proposed record supersedes an open one only when their rates differ; identical rates are reported as `unchanged`.
-- Models missing from an import or refresh proposal are never retired.
+- Models missing from a proposal are never retired.
 - A proposed `effective_from` must start after the open record's start, or the command fails without writing.
+- Official-provider records take precedence over `models.dev` catalog observations for pricing lookup. A catalog observation does not replace an official record solely because it is newer.
 
 ### Ledger format
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "unit": "USD per 1M tokens",
   "records": [
     {
@@ -233,7 +244,11 @@ octoken pricing refresh --effective-from 2026-09-18 --target my-ledger.json --ye
       "effective_to": null,
       "status": "active",
       "confidence": "observed/inferred",
-      "source": {"url": "https://openai.com/api/pricing/", "retrieved_at": "2026-09-18T00:00:00Z"},
+      "billing_channel": "direct_api",
+      "source_kind": "official",
+      "source_revision": "",
+      "observed_at": "2026-09-18T00:00:00Z",
+      "source": {"url": "https://openai.com/api/pricing/", "retrieved_at": "2026-09-18T00:00:00Z", "kind": "official", "revision": ""},
       "rates": {"input": 2.0, "output": 0.2, "cacheRead": 2.5, "cacheWrite": 12.0}
     }
   ]

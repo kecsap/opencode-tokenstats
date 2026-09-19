@@ -75,6 +75,8 @@ def build_report_schema(
             "default_fallback_calls": 0,
             "unpriced_calls": 0,
             "provenances": [],
+            "pricing_channels": [],
+            "pricing_revisions": [],
         }
 
     aliases = load_model_aliases(model_alias_file)
@@ -104,6 +106,11 @@ def build_report_schema(
                 provenance = str(row.get("pricing_provenance", ""))
                 if provenance and provenance not in models[model_key]["provenances"]:
                     models[model_key]["provenances"].append(provenance)
+                for field in ("pricing_channels", "pricing_revisions"):
+                    for value in str(row.get(field, "")).split(";"):
+                        value = value.strip()
+                        if value and value not in models[model_key][field]:
+                            models[model_key][field].append(value)
         else:
             model_key = resolve_alias(m.model, aliases)
             if model_key not in models:
@@ -186,6 +193,8 @@ def build_report_schema(
                 "default_fallback_calls": default_fallback_calls,
                 "unpriced_calls": unpriced_calls,
                 "pricing_provenance": "; ".join(str(item) for item in costs["provenances"]),
+                "pricing_channels": "; ".join(str(item) for item in costs["pricing_channels"]),
+                "pricing_revisions": "; ".join(str(item) for item in costs["pricing_revisions"]),
                 "pricing_status": pricing_status,
             }
         )

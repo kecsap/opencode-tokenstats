@@ -26,12 +26,53 @@ def test_load_pricing_history_package_data() -> None:
     terra = lookup.get_pricing("openai/gpt-5.6-terra")
     terra_fast = lookup.get_pricing("openai/gpt-5.6-terra-fast")
     luna_fast = lookup.get_pricing("openai/gpt-5.6-luna-fast")
+    official_terra = next(
+        record
+        for record in lookup.history
+        if record.model == "gpt-5.6-terra"
+        and record.source_kind == "provider_official"
+        and record.source_url == "https://openai.com/api/pricing/"
+    )
 
     assert (terra.input, terra.output, terra.cache_read, terra.cache_write) == (2.0, 0.2, 2.5, 12.0)
     assert (terra_fast.input, terra_fast.output, terra_fast.cache_read, terra_fast.cache_write) == (4.0, 0.4, 5.0, 24.0)
     assert (luna_fast.input, luna_fast.output, luna_fast.cache_read, luna_fast.cache_write) == (0.4, 0.04, 0.5, 2.4)
-    assert lookup.history[0].effective_from == "2026-09-18T00:00:00Z"
-    assert lookup.history[0].confidence == "observed/inferred"
+    assert official_terra.effective_from == "2026-09-18T00:00:00Z"
+    assert official_terra.confidence == "observed/inferred"
+    assert official_terra.billing_channel == "direct_api"
+    assert official_terra.source_revision == "openai-pricing-2026-09-18"
+
+
+def test_official_correction_supersedes_catalog_record() -> None:
+    payload = {
+        "schema_version": 2,
+        "unit": "USD per 1M tokens",
+        "records": [
+            {
+                "provider": "openai", "model": "gpt-x", "aliases": ["gpt-x"],
+                "billing_channel": "direct_api", "service_profile": "standard", "context": "short",
+                "effective_from": "2026-01-01T00:00:00Z", "effective_to": None,
+                "status": "active", "confidence": "observed",
+                "source": {"url": "catalog", "retrieved_at": "2026-01-01T00:00:00Z", "kind": "catalog"},
+                "rates": {"input": 1, "output": 2},
+            },
+            {
+                "provider": "openai", "model": "gpt-x", "aliases": ["gpt-x"],
+                "billing_channel": "direct_api", "service_profile": "standard", "context": "short",
+                "effective_from": "2026-01-01T00:00:00Z", "effective_to": None,
+                "status": "active", "confidence": "official",
+                "source": {"url": "official", "retrieved_at": "2026-01-02T00:00:00Z", "kind": "provider_official"},
+                "rates": {"input": 3, "output": 4},
+            },
+        ],
+    }
+    data, history = _parse_pricing_history(payload)
+    resolution = PricingLookup(data, history, flat_keys=frozenset()).resolve_call_pricing(
+        "gpt-x", 1770000000000
+    )
+    assert resolution.pricing is not None
+    assert resolution.pricing.input == 3
+    assert resolution.provenance == "official"
 
 
 def test_pricing_history_rejects_invalid_metadata_and_tiers() -> None:

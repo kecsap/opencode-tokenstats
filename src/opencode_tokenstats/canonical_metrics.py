@@ -358,6 +358,8 @@ def _build_per_model_costs(
                 "default_fallback_calls": 0,
                 "unpriced_calls": 0,
                 "provenances": [],
+                "pricing_channels": [],
+                "pricing_revisions": [],
             }
             grouped[model_name] = row
         row["tokens"] += call.input_tokens + call.output_tokens + call.reasoning_tokens + call.cache_read_tokens + call.cache_write_tokens
@@ -375,6 +377,10 @@ def _build_per_model_costs(
                 row["default_fallback_calls"] += 1
             if resolution.provenance and resolution.provenance not in row["provenances"]:
                 row["provenances"].append(resolution.provenance)
+            if resolution.billing_channel and resolution.billing_channel not in row["pricing_channels"]:
+                row["pricing_channels"].append(resolution.billing_channel)
+            if resolution.source_revision and resolution.source_revision not in row["pricing_revisions"]:
+                row["pricing_revisions"].append(resolution.source_revision)
         else:
             row["unpriced_calls"] += 1
 
@@ -408,6 +414,8 @@ def _build_per_model_costs(
                 "default_fallback_calls": int(row["default_fallback_calls"]),
                 "unpriced_calls": int(row["unpriced_calls"]),
                 "pricing_provenance": "; ".join(str(item) for item in row["provenances"]),
+                "pricing_channels": "; ".join(str(item) for item in row["pricing_channels"]),
+                "pricing_revisions": "; ".join(str(item) for item in row["pricing_revisions"]),
             }
         )
     rows.sort(key=lambda x: (float(x["api_cost"]), float(x["estimated_cost"])), reverse=True)

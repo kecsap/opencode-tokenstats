@@ -12,6 +12,7 @@ import sys
 from urllib.parse import parse_qs, urlsplit
 
 import click
+import httpx
 
 try:
     import tqdm as tqdm_mod
@@ -43,6 +44,14 @@ if __package__ in {None, ""}:
         resolve_alias,
         write_pricing_ledger,
     )
+    from opencode_tokenstats.models_dev import (
+        DEFAULT_MODELS_DEV_HISTORY_URL,
+        DEFAULT_MODELS_DEV_URL,
+        collect_models_dev_history,
+        collect_models_dev_snapshot,
+        fetch_models_dev_catalog,
+        write_models_dev_snapshot,
+    )
     from opencode_tokenstats.trends import build_period_trends
     from opencode_tokenstats.telemetry import collect_telemetry_calls
 else:
@@ -65,6 +74,14 @@ else:
         pricing_status_report,
         resolve_alias,
         write_pricing_ledger,
+    )
+    from .models_dev import (
+        DEFAULT_MODELS_DEV_HISTORY_URL,
+        DEFAULT_MODELS_DEV_URL,
+        collect_models_dev_history,
+        collect_models_dev_snapshot,
+        fetch_models_dev_catalog,
+        write_models_dev_snapshot,
     )
     from .trends import build_period_trends
     from .telemetry import collect_telemetry_calls
@@ -366,6 +383,57 @@ def pricing_refresh(
         merged, changes = merge_pricing_history(current, records)
     except (OSError, ValueError) as exc:
         raise click.ClickException(f"refresh validation failed; ledger unchanged: {exc}") from exc
+    _apply_pricing_write(merged, changes, target, yes)
+
+
+@pricing_group.command("snapshot")
+@click.option("--source-url", default=DEFAULT_MODELS_DEV_URL, show_default=True)
+@click.option("--target", required=True, type=click.Path(dir_okay=False), help="Explicit JSON path to write")
+@click.option("--yes", is_flag=True, help="Write the validated snapshot")
+def pricing_snapshot(source_url: str, target: str, yes: bool) -> None:
+    """Preview or write the current all-provider models.dev price snapshot."""
+    try:
+        catalog, revision = fetch_models_dev_catalog(source_url)
+        snapshot = collect_models_dev_snapshot(catalog, source_url=source_url, revision=revision)
+        click.echo(f"models.dev snapshot: {len(snapshot['records'])} priced models, revision={revision}")
+        if yes:
+            target_path = Path(target)
+            if target_path.exists():
+                try:
+                    current = load_pricing_ledger(target)
+                except (OSError, ValueError):
+                    current = None
+                if current is None:
+                    write_models_dev_snapshot(target, snapshot)
+                else:
+                    merged, changes = merge_pricing_history(current, snapshot["records"])
+                    write_pricing_ledger(target, merged)
+                    click.echo(f"merged: {len(changes)} models.dev records")
+            else:
+                write_models_dev_snapshot(target, snapshot)
+            click.echo(f"written: {target}")
+        else:
+            click.echo(f"preview only; pass --yes to write to {target}")
+    except (OSError, ValueError, httpx.HTTPError) as exc:
+        raise click.ClickException(f"models.dev snapshot failed; target unchanged: {exc}") from exc
+
+
+@pricing_group.command("backfill")
+@click.argument("manifest", type=click.Path(exists=True, dir_okay=False))
+@click.option("--source-url-template", default=None, help="Pinned catalog URL template containing {revision}")
+@click.option("--ledger", default=None, help="Current ledger to merge into")
+@click.option("--target", required=True, type=click.Path(dir_okay=False), help="Explicit ledger path to write")
+@click.option("--yes", is_flag=True, help="Write the merged ledger to --target (preview only without it)")
+def pricing_backfill(manifest: str, source_url_template: str | None, ledger: str | None, target: str, yes: bool) -> None:
+    """Fetch pinned models.dev revisions and propose dated historical records."""
+    try:
+        payload = json.loads(Path(manifest).read_text(encoding="utf-8"))
+        revisions = payload.get("revisions") if isinstance(payload, dict) else payload
+        records = collect_models_dev_history(revisions, source_url_template=source_url_template or DEFAULT_MODELS_DEV_HISTORY_URL)
+        current = load_pricing_ledger(ledger)
+        merged, changes = merge_pricing_history(current, records)
+    except (OSError, ValueError, httpx.HTTPError) as exc:
+        raise click.ClickException(f"backfill validation failed; ledger unchanged: {exc}") from exc
     _apply_pricing_write(merged, changes, target, yes)
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -138,6 +139,46 @@ def test_merge_rejects_backdated_supersession() -> None:
         merge_pricing_history(current, proposed)
 
 
+def test_merge_historical_models_dev_records_without_rewriting_open_record() -> None:
+    current = _ledger([_record("gpt-9", "standard", 3.0, 6.0, start="2026-10-01T00:00:00Z")])
+    proposed = _record("gpt-9", "standard", 1.0, 2.0, start="2026-09-01T00:00:00Z")
+    proposed["source"] = {
+        "url": "https://raw.githubusercontent.com/anomalyco/models.dev/revision/api.json",
+        "retrieved_at": "2026-09-01T00:00:00Z",
+        "kind": "models.dev",
+        "revision": "0123456789abcdef0123456789abcdef01234567",
+    }
+    merged, _ = merge_pricing_history(current, [proposed])
+    historical = next(record for record in merged["records"] if record["effective_from"] == "2026-09-01T00:00:00Z")
+    assert historical["effective_to"] == "2026-10-01T00:00:00Z"
+    assert merged["records"][0]["effective_to"] is None
+
+
+def test_merge_multiple_historical_models_dev_revisions_for_new_model() -> None:
+    def historical(input_rate: float, start: str, revision: str) -> dict:
+        record = _record("new-model", "standard", input_rate, input_rate * 2, start=start)
+        record["source"] = {
+            "url": f"https://models.dev/{revision}.json",
+            "retrieved_at": start,
+            "kind": "models.dev",
+            "revision": revision,
+        }
+        return record
+
+    merged, _ = merge_pricing_history(
+        _ledger([]),
+        [
+            historical(2.0, "2026-09-01T00:00:00Z", "a" * 40),
+            historical(1.0, "2026-08-01T00:00:00Z", "b" * 40),
+        ],
+    )
+
+    records = sorted(merged["records"], key=lambda record: record["effective_from"])
+    assert records[0]["effective_to"] == "2026-09-01T00:00:00Z"
+    assert records[1]["effective_to"] is None
+    _parse_pricing_history(merged)
+
+
 def test_write_pricing_ledger_is_atomic(tmp_path) -> None:
     target = tmp_path / "ledger.json"
     payload = _ledger([_record("gpt-9", "standard", 1.0, 2.0)])
@@ -164,7 +205,7 @@ def test_pricing_status_report_bundled_ledger() -> None:
     assert by_key[("openai", "gpt-5.6-terra", "standard")]["source_url"] == "https://openai.com/api/pricing/"
     assert "gpt-5.6-terra-fast" in report["fast_aliases"]
     assert "gpt-5.6-luna-fast" in report["fast_aliases"]
-    assert report["coverage_gaps"] == ["openai/gpt-5.6-luna: no active standard record"]
+    assert by_key[("openai", "gpt-5.6-luna", "standard")]["status"] == "active"
 
 
 def test_cli_pricing_status_offline() -> None:
@@ -220,6 +261,73 @@ def test_cli_pricing_import_rejects_malformed_source(tmp_path) -> None:
     assert result.exit_code == 1
     assert "ledger unchanged" in result.output
     assert not target.exists()
+
+
+def test_cli_pricing_backfill_preview_and_write(tmp_path, monkeypatch) -> None:
+    ledger_path = _write_ledger_file(tmp_path, "current.json", _ledger([]))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"revisions": [{"revision": "a" * 40, "effective_from": "2026-09-01"}]}),
+        encoding="utf-8",
+    )
+    record = _record("new-model", "standard", 1.0, 2.0, start="2026-09-01T00:00:00Z")
+    record["source"] = {
+        "url": "https://models.dev/a.json",
+        "kind": "models.dev",
+        "revision": "a" * 40,
+        "retrieved_at": record["effective_from"],
+    }
+    monkeypatch.setattr(cli, "collect_models_dev_history", lambda revisions, **kwargs: [record])
+    target = tmp_path / "target.json"
+
+    runner = CliRunner()
+    preview = runner.invoke(
+        cli.main,
+        ["pricing", "backfill", str(manifest), "--ledger", ledger_path, "--target", str(target)],
+    )
+    assert preview.exit_code == 0, preview.output
+    assert "preview only" in preview.output
+    assert not target.exists()
+
+    written = runner.invoke(
+        cli.main,
+        ["pricing", "backfill", str(manifest), "--ledger", ledger_path, "--target", str(target), "--yes"],
+    )
+    assert written.exit_code == 0, written.output
+    assert len(json.loads(target.read_text(encoding="utf-8"))["records"]) == 1
+
+
+def test_cli_pricing_backfill_manifest_failure_preserves_target(tmp_path) -> None:
+    ledger_path = _write_ledger_file(tmp_path, "current.json", _ledger([]))
+    manifest = tmp_path / "bad.json"
+    manifest.write_text("{bad", encoding="utf-8")
+    target = tmp_path / "target.json"
+    target.write_bytes(b"sentinel\n")
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["pricing", "backfill", str(manifest), "--ledger", ledger_path, "--target", str(target), "--yes"],
+    )
+    assert result.exit_code == 1
+    assert "ledger unchanged" in result.output
+    assert target.read_bytes() == b"sentinel\n"
+
+
+def test_cli_pricing_backfill_fetch_failure_preserves_target(tmp_path, monkeypatch) -> None:
+    ledger_path = _write_ledger_file(tmp_path, "current.json", _ledger([]))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"revisions": [{"revision": "a" * 40, "effective_from": "2026-09-01"}]}), encoding="utf-8")
+    target = tmp_path / "target.json"
+    target.write_bytes(b"sentinel\n")
+    monkeypatch.setattr(cli, "collect_models_dev_history", lambda *args, **kwargs: (_ for _ in ()).throw(httpx.HTTPError("boom")))
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["pricing", "backfill", str(manifest), "--ledger", ledger_path, "--target", str(target), "--yes"],
+    )
+    assert result.exit_code == 1
+    assert "ledger unchanged" in result.output
+    assert target.read_bytes() == b"sentinel\n"
 
 
 _OFFICIAL_PRICING_HTML = """

@@ -70,6 +70,8 @@
       "default_fallback_calls": 1,
       "unpriced_calls": 0,
       "pricing_provenance": "default",
+      "pricing_channels": "",
+      "pricing_revisions": "",
       "pricing_status": "default_fallback"
     }
   ],

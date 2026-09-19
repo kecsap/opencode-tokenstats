@@ -140,6 +140,7 @@ class ModelPricing:
     output: float
     cache_read: float
     cache_write: float = 0.0
+    reasoning: float | None = None
     web_search: float = 0.0
     fast_multiplier: float = 1.0
     tiers: tuple["ContextPricing", ...] = field(default_factory=tuple)
@@ -169,6 +170,10 @@ class PricingRecord:
     retrieved_at: str
     pricing: ModelPricing
     aliases: tuple[str, ...] = ()
+    billing_channel: str = "direct_api"
+    source_revision: str = ""
+    observed_at: str = ""
+    source_kind: str = "catalog"
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +188,9 @@ class PricingResolution:
     provenance: str = ""
     effective_from: str | None = None
     effective_to: str | None = None
+    billing_channel: str = ""
+    source_revision: str = ""
+    observed_at: str = ""
 
 
 class PricingLookup:
@@ -277,6 +285,9 @@ class PricingLookup:
                     provenance=record.source_url,
                     effective_from=record.effective_from,
                     effective_to=record.effective_to,
+                    billing_channel=record.billing_channel,
+                    source_revision=record.source_revision,
+                    observed_at=record.observed_at,
                 )
 
         pricing, key = self._find_pricing_key(raw_name)
@@ -317,9 +328,13 @@ class PricingLookup:
 
         active = [record for record in matched if _interval_contains(record, moment)]
         if active:
-            return max(active, key=lambda record: record.effective_from), "active"
+            return max(active, key=lambda record: (_source_priority(record), _record_start(record))), "active"
 
-        later = [record for record in matched if _record_start(record) > moment]
+        later = [
+            record
+            for record in matched
+            if _record_start(record) > moment and record.source_kind.lower() != "models.dev"
+        ]
         if later:
             return min(later, key=lambda record: _record_start(record)), "future_fallback"
 
@@ -364,11 +379,12 @@ def estimate_session_cost_usd(
 ) -> float:
     rate = _select_pricing_rate(pricing, context_tokens)
     input_cost = (max(0, input_tokens) / 1_000_000) * rate.input
-    output_cost = ((max(0, output_tokens) + max(0, reasoning_tokens)) / 1_000_000) * rate.output
+    output_cost = (max(0, output_tokens) / 1_000_000) * rate.output
+    reasoning_cost = (max(0, reasoning_tokens) / 1_000_000) * (rate.reasoning if rate.reasoning is not None else rate.output)
     cache_read_cost = (max(0, cache_read_tokens) / 1_000_000) * rate.cache_read
     cache_write_cost = (max(0, cache_write_tokens) / 1_000_000) * rate.cache_write
     web_search_cost = max(0, web_search_requests) * pricing.web_search
-    return input_cost + output_cost + cache_read_cost + cache_write_cost + web_search_cost
+    return input_cost + output_cost + reasoning_cost + cache_read_cost + cache_write_cost + web_search_cost
 
 
 def _select_pricing_rate(pricing: ModelPricing, context_tokens: int | None) -> ModelPricing:
@@ -394,6 +410,7 @@ def _select_pricing_rate(pricing: ModelPricing, context_tokens: int | None) -> M
             output=matched_tier.output,
             cache_read=matched_tier.cache_read,
             cache_write=matched_tier.cache_write,
+            reasoning=pricing.reasoning,
             web_search=pricing.web_search,
             fast_multiplier=pricing.fast_multiplier,
             tiers=pricing.tiers,
@@ -490,6 +507,7 @@ def _model_pricing_from_rates(
         output=float(value.get("output", 0) or 0),
         cache_read=float(value.get("cacheRead", value.get("cache_read", 0)) or 0),
         cache_write=float(value.get("cacheWrite", value.get("cache_write", 0)) or 0),
+        reasoning=(float(value["reasoning"]) if value.get("reasoning") is not None else None),
         web_search=float(value.get("webSearch", value.get("web_search", 0)) or 0),
         fast_multiplier=float(value.get("fastMultiplier", value.get("fast_multiplier", 1)) or 1),
         tiers=tiers,
@@ -498,15 +516,16 @@ def _model_pricing_from_rates(
 
 
 def _parse_pricing_history(payload: object) -> tuple[dict[str, ModelPricing], tuple[PricingRecord, ...]]:
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1 or payload.get("unit") != "USD per 1M tokens":
+    if not isinstance(payload, dict) or payload.get("schema_version") not in (1, 2) or payload.get("unit") != "USD per 1M tokens":
         raise ValueError("invalid pricing history header")
     raw_records = payload.get("records")
     if not isinstance(raw_records, list):
         raise ValueError("pricing history records must be a list")
 
     records: list[PricingRecord] = []
-    intervals: dict[tuple[str, str, str], list[tuple[datetime, datetime | None]]] = {}
+    intervals: dict[tuple[str, str, str, str], list[tuple[datetime, datetime | None, str]]] = {}
     data: dict[str, ModelPricing] = {}
+    data_priorities: dict[str, int] = {}
     for raw in raw_records:
         if not isinstance(raw, dict):
             raise ValueError("pricing history record must be an object")
@@ -522,11 +541,14 @@ def _parse_pricing_history(payload: object) -> tuple[dict[str, ModelPricing], tu
         provider = _required_text(raw, "provider")
         model = _required_text(raw, "model")
         profile = _required_text(raw, "service_profile")
-        interval_key = (provider.lower(), model.lower(), profile.lower())
-        for old_start, old_end in intervals.setdefault(interval_key, []):
+        billing_channel = str(raw.get("billing_channel", raw.get("channel", "direct_api"))).strip() or "direct_api"
+        source_kind = str(raw.get("source_kind", source.get("kind", "catalog"))).strip() or "catalog"
+        interval_key = (provider.lower(), model.lower(), profile.lower(), billing_channel.lower())
+        for old_start, old_end, old_source_kind in intervals.setdefault(interval_key, []):
             if (end is None or old_start < end) and (old_end is None or start < old_end):
-                raise ValueError("pricing history intervals overlap")
-        intervals[interval_key].append((start, end))
+                if source_kind.lower() not in {"official", "provider_official"} and old_source_kind.lower() not in {"official", "provider_official"}:
+                    raise ValueError("pricing history intervals overlap")
+        intervals[interval_key].append((start, end, source_kind))
         pricing = _model_pricing_from_rates(
             rates,
             tiers=_parse_context_tiers(rates.get("tiers"), strict=True),
@@ -549,10 +571,18 @@ def _parse_pricing_history(payload: object) -> tuple[dict[str, ModelPricing], tu
             retrieved_at=retrieved_at.isoformat().replace("+00:00", "Z"),
             pricing=pricing,
             aliases=tuple(_required_alias(alias) for alias in aliases),
+            billing_channel=billing_channel,
+            source_revision=str(raw.get("source_revision", source.get("revision", ""))).strip(),
+            observed_at=_optional_history_date(raw.get("observed_at", source.get("observed_at", retrieved_at.isoformat().replace("+00:00", "Z")))),
+            source_kind=source_kind,
         )
         records.append(record)
+        priority = _source_priority(record)
         for alias in record.aliases:
-            data[alias.lower()] = pricing
+            alias_key = alias.lower()
+            if priority >= data_priorities.get(alias_key, -1):
+                data[alias_key] = pricing
+                data_priorities[alias_key] = priority
     return data, tuple(records)
 
 
@@ -581,6 +611,17 @@ def _parse_history_date(value: object, *, allow_none: bool = False) -> datetime 
     if parsed.tzinfo is None:
         raise ValueError("pricing history date must include timezone")
     return parsed.astimezone(timezone.utc)
+
+
+def _optional_history_date(value: object) -> str:
+    if value in (None, ""):
+        return ""
+    parsed = _parse_history_date(value)
+    return parsed.isoformat().replace("+00:00", "Z")
+
+
+def _source_priority(record: PricingRecord) -> int:
+    return 2 if record.source_kind.lower() in {"official", "provider_official"} else 1
 
 
 def _validate_rates(pricing: ModelPricing) -> None:
@@ -881,11 +922,22 @@ def merge_pricing_history(current_payload: object, proposed_records: object) -> 
     _parse_pricing_history(current_payload)
     if not isinstance(proposed_records, list):
         raise ValueError("proposed pricing records must be a list")
-    _parse_pricing_history({
-        "schema_version": 1,
-        "unit": "USD per 1M tokens",
-        "records": proposed_records,
-    })
+    if any(record.get("source", {}).get("kind", "").lower() == "models.dev" for record in proposed_records):
+        for record in proposed_records:
+            _parse_pricing_history({
+                "schema_version": 1,
+                "unit": "USD per 1M tokens",
+                "records": [record],
+            })
+    else:
+        _parse_pricing_history({
+            "schema_version": 1,
+            "unit": "USD per 1M tokens",
+            "records": proposed_records,
+        })
+    proposed_records = list(proposed_records)
+    if any(record.get("source", {}).get("kind", "").lower() == "models.dev" for record in proposed_records):
+        proposed_records.sort(key=lambda record: _parse_history_date(record["effective_from"]), reverse=True)
 
     current_records = [dict(record) for record in current_payload["records"]]
     open_by_key: dict[tuple[str, str, str], dict] = {}
@@ -901,13 +953,32 @@ def merge_pricing_history(current_payload: object, proposed_records: object) -> 
         open_record = open_by_key.get(key)
         if open_record is None:
             current_records.append(record)
+            open_by_key[key] = record
             changes.append(f"add {label}: effective from {record['effective_from']}")
             continue
         if _pricing_from_record(open_record) == _pricing_from_record(record):
             changes.append(f"unchanged {label}")
             continue
         start = _parse_history_date(record["effective_from"])
-        if start <= _parse_history_date(open_record["effective_from"]):
+        open_start = _parse_history_date(open_record["effective_from"])
+        record_source_kind = record.get("source", {}).get("kind", "").lower()
+        if record_source_kind == "models.dev" and start < open_start:
+            later_starts = [
+                _parse_history_date(existing["effective_from"])
+                for existing in current_records
+                if _record_identity(existing) == key and _parse_history_date(existing["effective_from"]) > start
+            ]
+            record["effective_to"] = min(later_starts).isoformat(timespec="seconds").replace("+00:00", "Z")
+            current_records.append(record)
+            changes.append(f"add {label}: historical period ends at {record['effective_to']}")
+            continue
+        open_is_official = open_record.get("source", {}).get("kind", "").lower() in {"official", "provider_official"}
+        record_is_official = record.get("source", {}).get("kind", "").lower() in {"official", "provider_official"}
+        if open_is_official != record_is_official:
+            current_records.append(record)
+            changes.append(f"add {label}: preserve official/catalog source precedence")
+            continue
+        if start <= open_start:
             raise ValueError(f"proposed record for {label} must start after {open_record['effective_from']}")
         open_record["effective_to"] = start.isoformat(timespec="seconds").replace("+00:00", "Z")
         current_records.append(record)
@@ -951,7 +1022,7 @@ def pricing_status_report(payload: object) -> dict:
         fast = [r for r in group if r.service_profile.lower() == "fast"]
         standard_active = any(r.effective_to is None for r in standard)
         fast_active = any(r.effective_to is None for r in fast)
-        for record in sorted(group, key=lambda r: r.effective_from):
+        for record in sorted(group, key=lambda r: (_source_priority(r), r.effective_from)):
             entries.append({
                 "provider": record.provider,
                 "model": record.model,
