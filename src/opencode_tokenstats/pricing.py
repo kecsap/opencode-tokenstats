@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
@@ -634,3 +635,336 @@ def _parse_context_tiers(value: object, *, strict: bool = False) -> tuple[Contex
     if strict and any(left.threshold == right.threshold for left, right in zip(tiers, tiers[1:])):
         raise ValueError("pricing history tier thresholds must be unique")
     return tuple(tiers)
+
+
+def default_ledger_path() -> Path:
+    """Path of the tracked pricing ledger shipped with the package."""
+    return Path(__file__).resolve().parent / "data" / "pricing-history.json"
+
+
+def load_pricing_ledger(path: str | Path | None = None) -> dict:
+    """Load a pricing history ledger file, validate it, and return its raw payload."""
+    ledger = Path(path) if path is not None else default_ledger_path()
+    payload = json.loads(ledger.read_text(encoding="utf-8"))
+    _parse_pricing_history(payload)
+    return payload
+
+
+def normalize_pricing_date(value: str) -> str:
+    """Normalize a YYYY-MM-DD date or ISO datetime to a UTC '...Z' string."""
+    text = value.strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        text = f"{text}T00:00:00+00:00"
+    parsed = _parse_history_date(text)
+    return parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def parse_official_openai_pricing(
+    payload: object,
+    *,
+    effective_from: str,
+    retrieved_at: str,
+    source_url: str,
+    provider: str = "openai",
+) -> list[dict]:
+    """Parse an official OpenAI pricing payload into dated ledger records.
+
+    The payload is a JSON object mapping model IDs to rate objects, optionally
+    wrapped under a "models" key. Model IDs ending in "-fast" produce a
+    "fast" service profile record; every other model produces a "standard"
+    record. Raises ValueError on malformed input.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("official pricing payload must be a JSON object")
+    models = payload.get("models", payload)
+    if not isinstance(models, dict) or not models:
+        raise ValueError("official pricing payload has no model entries")
+    effective = _parse_history_date(normalize_pricing_date(effective_from))
+    retrieved = _parse_history_date(normalize_pricing_date(retrieved_at))
+    records: list[dict] = []
+    for raw_model, rates in models.items():
+        if not isinstance(raw_model, str) or not raw_model.strip():
+            raise ValueError("official pricing model names must be non-empty text")
+        model = raw_model.strip()
+        if not isinstance(rates, dict):
+            raise ValueError(f"official pricing rates for {model} must be an object")
+        for key in ("input", "output"):
+            if key not in rates:
+                raise ValueError(f"official pricing rates for {model} are missing {key}")
+        pricing = _model_pricing_from_rates(rates)
+        _validate_rates(pricing)
+        profile = "fast" if model.lower().endswith("-fast") else "standard"
+        rate_obj: dict[str, object] = {
+            "input": pricing.input,
+            "output": pricing.output,
+            "cacheRead": pricing.cache_read,
+            "cacheWrite": pricing.cache_write,
+        }
+        if pricing.web_search > 0:
+            rate_obj["webSearch"] = pricing.web_search
+        if pricing.fast_multiplier != 1.0:
+            rate_obj["fastMultiplier"] = pricing.fast_multiplier
+        if isinstance(rates.get("tiers"), list):
+            rate_obj["tiers"] = rates["tiers"]
+        context = rates.get("contextOver200k") or rates.get("context_over_200k")
+        if isinstance(context, dict):
+            rate_obj["contextOver200k"] = context
+        records.append({
+            "provider": provider,
+            "model": model,
+            "aliases": [model, f"{provider}/{model}"],
+            "service_profile": profile,
+            "context": "short",
+            "effective_from": effective.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "effective_to": None,
+            "status": "active",
+            "confidence": "observed",
+            "source": {
+                "url": source_url,
+                "retrieved_at": retrieved.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            },
+            "rates": rate_obj,
+        })
+    return records
+
+
+class _OfficialPricingHTMLParser(HTMLParser):
+    """Collect per-1M-token price rows from the official OpenAI pricing page.
+
+    Only tables inside the ``latest-pricing`` content-switcher panes with
+    ``data-value`` of ``standard`` or ``fast`` are collected, so per-minute
+    and modality tables in the same section are ignored.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._section_div_depth: int | None = None
+        self._pane_value: str | None = None
+        self._pane_div_depth: int | None = None
+        self._div_depth = 0
+        self._in_table = False
+        self._in_row = False
+        self._cell_parts: list[str] | None = None
+        self._row: list[str] = []
+        self.tables: dict[str, list[list[str]]] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs = dict(attrs)
+        if tag == "div":
+            self._div_depth += 1
+            if self._section_div_depth is None and attrs.get("id") == "content-switcher-latest-pricing":
+                self._section_div_depth = self._div_depth
+            elif (
+                self._section_div_depth is not None
+                and self._pane_div_depth is None
+                and attrs.get("data-value") in ("standard", "fast")
+            ):
+                self._pane_value = attrs["data-value"]
+                self._pane_div_depth = self._div_depth
+        elif tag == "table" and self._pane_value is not None:
+            self._in_table = True
+        elif tag == "tr" and self._in_table:
+            self._in_row = True
+            self._row = []
+        elif tag in ("td", "th") and self._in_row:
+            self._cell_parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("td", "th") and self._cell_parts is not None:
+            self._row.append("".join(self._cell_parts).strip())
+            self._cell_parts = None
+        elif tag == "tr" and self._in_row:
+            self._in_row = False
+            if self._row and self._pane_value is not None:
+                self.tables.setdefault(self._pane_value, []).append(self._row)
+            self._row = []
+        elif tag == "table" and self._in_table:
+            self._in_table = False
+        elif tag == "div":
+            if self._pane_div_depth is not None and self._div_depth == self._pane_div_depth:
+                self._pane_value = None
+                self._pane_div_depth = None
+            if self._section_div_depth is not None and self._div_depth == self._section_div_depth:
+                self._section_div_depth = None
+            self._div_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._cell_parts is not None:
+            self._cell_parts.append(data)
+
+
+def _parse_price_cell(value: str) -> float | None:
+    text = value.replace("$", "").replace(",", "").strip()
+    if not text or text == "-":
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def parse_official_openai_pricing_html(html: str) -> dict:
+    """Extract Standard/Fast model rates from the official OpenAI pricing page.
+
+    Returns a ``{"models": {...}}`` payload in the shape accepted by
+    ``parse_official_openai_pricing``: short-context rates plus an optional
+    ``contextOver200k`` tier per model, and ``<model>-fast`` entries for the
+    fast pane. The first table listing a model wins. Raises ValueError when
+    the page has no per-1M-token model rate tables.
+    """
+    parser = _OfficialPricingHTMLParser()
+    parser.feed(html)
+    models: dict[str, dict[str, object]] = {}
+    for pane in ("standard", "fast"):
+        for row in parser.tables.get(pane, []):
+            if len(row) != 9 or not row[0] or row[0] == "Model":
+                continue
+            model = row[0]
+            key = f"{model}-fast" if pane == "fast" else model
+            if key in models:
+                continue
+            rates: dict[str, object] = {}
+            for field_name, value in zip(("input", "cacheRead", "cacheWrite", "output"), row[1:5]):
+                price = _parse_price_cell(value)
+                if price is None:
+                    raise ValueError(f"official pricing page has no short-context {field_name} rate for {model}")
+                rates[field_name] = price
+            long_rates = [_parse_price_cell(value) for value in row[5:9]]
+            if any(value is not None for value in long_rates):
+                if any(value is None for value in long_rates):
+                    raise ValueError(f"official pricing page has partial long-context rates for {model}")
+                rates["contextOver200k"] = {
+                    "input": long_rates[0],
+                    "cacheRead": long_rates[1],
+                    "cacheWrite": long_rates[2],
+                    "output": long_rates[3],
+                }
+            models[key] = rates
+    if not models:
+        raise ValueError("official pricing page has no model rate tables")
+    return {"models": models}
+
+
+def _record_identity(record: dict[object, object]) -> tuple[str, str, str]:
+    return (
+        str(record.get("provider", "")).lower(),
+        str(record.get("model", "")).lower(),
+        str(record.get("service_profile", "")).lower(),
+    )
+
+
+def _pricing_from_record(record: dict[object, object]) -> ModelPricing:
+    rates = record["rates"]
+    return _model_pricing_from_rates(
+        rates,
+        tiers=_parse_context_tiers(rates.get("tiers"), strict=True),
+        context_over_200k=_parse_context_pricing(
+            rates.get("contextOver200k") or rates.get("context_over_200k"), strict=True
+        ),
+    )
+
+
+def merge_pricing_history(current_payload: object, proposed_records: object) -> tuple[dict, list[str]]:
+    """Merge proposed dated records into a current ledger payload.
+
+    Returns (merged_payload, change_lines). A proposed record supersedes an open
+    record with the same provider/model/service_profile only when their rates
+    differ; records for models missing from the proposal are never retired.
+    Raises ValueError when the merge would produce an invalid ledger.
+    """
+    if not isinstance(current_payload, dict):
+        raise ValueError("current pricing ledger must be a JSON object")
+    _parse_pricing_history(current_payload)
+    if not isinstance(proposed_records, list):
+        raise ValueError("proposed pricing records must be a list")
+    _parse_pricing_history({
+        "schema_version": 1,
+        "unit": "USD per 1M tokens",
+        "records": proposed_records,
+    })
+
+    current_records = [dict(record) for record in current_payload["records"]]
+    open_by_key: dict[tuple[str, str, str], dict] = {}
+    for record in current_records:
+        if record.get("effective_to") is None:
+            open_by_key[_record_identity(record)] = record
+
+    changes: list[str] = []
+    for record in proposed_records:
+        record = dict(record)
+        key = _record_identity(record)
+        label = f"{key[0]}/{key[1]} [{key[2]}]"
+        open_record = open_by_key.get(key)
+        if open_record is None:
+            current_records.append(record)
+            changes.append(f"add {label}: effective from {record['effective_from']}")
+            continue
+        if _pricing_from_record(open_record) == _pricing_from_record(record):
+            changes.append(f"unchanged {label}")
+            continue
+        start = _parse_history_date(record["effective_from"])
+        if start <= _parse_history_date(open_record["effective_from"]):
+            raise ValueError(f"proposed record for {label} must start after {open_record['effective_from']}")
+        open_record["effective_to"] = start.isoformat(timespec="seconds").replace("+00:00", "Z")
+        current_records.append(record)
+        changes.append(
+            f"change {label}: closes period from {open_record['effective_from']}, new period from {record['effective_from']}"
+        )
+
+    merged = dict(current_payload)
+    merged["records"] = current_records
+    _parse_pricing_history(merged)
+    return merged, changes
+
+
+def write_pricing_ledger(path: str | Path, payload: object) -> None:
+    """Atomically write a validated pricing ledger payload to an explicit path."""
+    _parse_pricing_history(payload)
+    target = Path(path)
+    tmp = target.with_name(f".{target.name}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, target)
+
+
+def pricing_status_report(payload: object) -> dict:
+    """Summarize a ledger payload: per-record status, fast aliases, coverage gaps."""
+    _parse_pricing_history(payload)
+    _, records = _parse_pricing_history(payload)
+
+    def base_model(model: str) -> str:
+        model_l = model.lower()
+        return model_l.removesuffix("-fast")
+
+    grouped: dict[tuple[str, str], list[PricingRecord]] = {}
+    for record in records:
+        grouped.setdefault((record.provider.lower(), base_model(record.model)), []).append(record)
+
+    entries: list[dict] = []
+    fast_aliases: list[str] = []
+    gaps: list[str] = []
+    for (provider, model), group in sorted(grouped.items()):
+        standard = [r for r in group if r.service_profile.lower() == "standard"]
+        fast = [r for r in group if r.service_profile.lower() == "fast"]
+        standard_active = any(r.effective_to is None for r in standard)
+        fast_active = any(r.effective_to is None for r in fast)
+        for record in sorted(group, key=lambda r: r.effective_from):
+            entries.append({
+                "provider": record.provider,
+                "model": record.model,
+                "service_profile": record.service_profile,
+                "status": "active" if record.effective_to is None else "retired",
+                "effective_from": record.effective_from,
+                "effective_to": record.effective_to,
+                "source_url": record.source_url,
+                "retrieved_at": record.retrieved_at,
+                "confidence": record.confidence,
+                "aliases": list(record.aliases),
+            })
+        if not standard_active and not fast_active:
+            gaps.append(f"{provider}/{model}: all records retired")
+        if standard_active and not fast_active:
+            gaps.append(f"{provider}/{model}: no active fast record")
+        if fast_active and not standard_active:
+            gaps.append(f"{provider}/{model}: no active standard record")
+        fast_aliases.extend(r.model for r in fast if r.effective_to is None)
+    return {"records": entries, "fast_aliases": sorted(fast_aliases), "coverage_gaps": gaps}

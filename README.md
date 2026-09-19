@@ -126,6 +126,9 @@ If you know [CodeBurn](https://github.com/getagentseal/codeburn), the goal is si
 | `lifetime` | Aggregate all sessions |
 | `json --period ... --format json|md` | Structured export |
 | `tokenizer-warmup` | Preload tokenizer caches |
+| `pricing status` | Inspect ledger records, Fast aliases, and coverage gaps |
+| `pricing import <source> --target <path>` | Merge reviewed dated records into the ledger |
+| `pricing refresh --target <path>` | Propose dated records from the official OpenAI pricing page |
 
 ### Global options
 
@@ -180,6 +183,80 @@ Load order:
 1. `--model-alias-file`
 2. `OPTOKEN_MODEL_ALIAS_FILE`
 3. `./models.conf`
+
+---
+
+## Pricing ledger
+
+Report costs come from a tracked historical ledger (`src/opencode_tokenstats/data/pricing-history.json`), not from live price lookups. Each record pins a rate to an effective period and the source where it was observed, so historical rates stay reviewable and reproducible.
+
+### Maintaining rates
+
+```bash
+# review what is active, retired, and missing
+octoken pricing status
+
+# import reviewed dated records from a ledger-format JSON file
+octoken pricing import reviewed-rates.json --target my-ledger.json --yes
+
+# fetch the official OpenAI pricing page and propose dated records
+octoken pricing refresh --effective-from 2026-09-18 --target my-ledger.json --yes
+```
+
+- `pricing status` lists every record with its status (active/retired), effective period, source URL, retrieval time, and confidence, plus Fast aliases and coverage gaps. `--ledger` points it at any ledger file.
+- `import` and `refresh` are preview-only unless you pass `--yes`; writes always go to the explicit `--target` path, never to the bundled ledger.
+- A failed fetch or validation leaves the ledger unchanged.
+- `refresh` only accepts official OpenAI https URLs (`openai.com` or `*.openai.com`); no third-party scrapers are supported. `--effective-from` (default: today UTC) stamps the proposed records.
+
+### Merge rules
+
+- A record's identity is `provider` + `model` + `service_profile`; a model ID ending in `-fast` gets its own `fast` record, all others are `standard`.
+- Updates are append-only: a new rate closes the open record for that identity at the new `effective_from` and adds a new record. Existing history is never rewritten or deleted.
+- A proposed record supersedes an open one only when their rates differ; identical rates are reported as `unchanged`.
+- Models missing from an import or refresh proposal are never retired.
+- A proposed `effective_from` must start after the open record's start, or the command fails without writing.
+
+### Ledger format
+
+```json
+{
+  "schema_version": 1,
+  "unit": "USD per 1M tokens",
+  "records": [
+    {
+      "provider": "openai",
+      "model": "gpt-5.6-terra",
+      "aliases": ["gpt-5.6-terra", "openai/gpt-5.6-terra"],
+      "service_profile": "standard",
+      "context": "short",
+      "effective_from": "2026-09-18T00:00:00Z",
+      "effective_to": null,
+      "status": "active",
+      "confidence": "observed/inferred",
+      "source": {"url": "https://openai.com/api/pricing/", "retrieved_at": "2026-09-18T00:00:00Z"},
+      "rates": {"input": 2.0, "output": 0.2, "cacheRead": 2.5, "cacheWrite": 12.0}
+    }
+  ]
+}
+```
+
+- Rates are USD per 1M tokens. `effective_to: null` means the period is open (active).
+- `aliases` are the exact model spellings a call can match (with and without the `provider/` prefix).
+- `source.url` and `source.retrieved_at` record where and when the rate was observed.
+- Optional rate fields: `webSearch`, `fastMultiplier`, `tiers`, `contextOver200k`.
+- Intervals for one identity must not overlap or run backwards.
+
+### How reports price calls
+
+Each API call in a report shows an `API` cost (what the OpenCode telemetry actually reported) and an `Est.` cost (computed from the rate active at the call's timestamp):
+
+- A reported positive `API` cost is authoritative: it takes precedence over the estimate, and the model row's `Est.` cost is zeroed. Estimates fill in only model rows without a reported API cost.
+- For known models, the ledger record whose effective period contains the call's timestamp wins.
+- A call before the first known period uses the earliest later rate and is counted as `future-fallback`, with a warning.
+- Unknown models, calls with no timestamp, and calls after every known period are `unpriced` (they add $0 to estimates) unless a flat rate file (`OPENCODE_MODEL_PRICING_FILE` or a local `models.json`) supplies a rate.
+- The session report prints `Pricing coverage: NN% (n priced, n unpriced, n future-fallback)`. With partial coverage, estimated totals are a floor, not a bill.
+
+Current official rates do not prove what you were billed historically: ledger records are observations tied to effective dates, and anything before the first observed record is an estimate. To correct historical rates, add dated records via `pricing import`.
 
 ---
 

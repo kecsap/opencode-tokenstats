@@ -37,6 +37,19 @@ class OpencodeApiClient:
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return self._request("GET", path, params=params)
 
+    def get_text(self, path: str, params: dict[str, Any] | None = None, *, follow_redirects: bool = True) -> str:
+        if not path.startswith("/"):
+            path = f"/{path}"
+        last_exc: Exception | None = None
+        for _ in range(max(1, self.retries + 1)):
+            try:
+                response = self._http.request("GET", path, params=params, follow_redirects=follow_redirects)
+                response.raise_for_status()
+                return response.text
+            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                last_exc = exc
+        raise ApiClientError(f"OpenCode API request failed: GET {path}") from last_exc
+
     def post(self, path: str, json: dict[str, Any] | None = None) -> Any:
         return self._request("POST", path, json=json)
 

@@ -9,6 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 import re
 import sys
+from urllib.parse import parse_qs, urlsplit
 
 import click
 
@@ -31,7 +32,17 @@ if __package__ in {None, ""}:
     from opencode_tokenstats.report_schema import build_report_schema, report_to_markdown
     from opencode_tokenstats.session_service import SessionService
     from opencode_tokenstats.tokenization import TokenizerRegistry
-    from opencode_tokenstats.pricing import load_model_aliases, resolve_alias
+    from opencode_tokenstats.pricing import (
+        load_model_aliases,
+        load_pricing_ledger,
+        merge_pricing_history,
+        normalize_pricing_date,
+        parse_official_openai_pricing,
+        parse_official_openai_pricing_html,
+        pricing_status_report,
+        resolve_alias,
+        write_pricing_ledger,
+    )
     from opencode_tokenstats.trends import build_period_trends
     from opencode_tokenstats.telemetry import collect_telemetry_calls
 else:
@@ -44,7 +55,17 @@ else:
     from .report_schema import build_report_schema, report_to_markdown
     from .session_service import SessionService
     from .tokenization import TokenizerRegistry
-    from .pricing import load_model_aliases, resolve_alias
+    from .pricing import (
+        load_model_aliases,
+        load_pricing_ledger,
+        merge_pricing_history,
+        normalize_pricing_date,
+        parse_official_openai_pricing,
+        parse_official_openai_pricing_html,
+        pricing_status_report,
+        resolve_alias,
+        write_pricing_ledger,
+    )
     from .trends import build_period_trends
     from .telemetry import collect_telemetry_calls
 
@@ -230,6 +251,122 @@ def health(
                 )
     except ApiClientError as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+@click.group(name="pricing", help="Inspect and maintain the tracked historical pricing ledger.")
+def pricing_group() -> None:
+    """Pricing ledger status, import, and refresh commands."""
+
+
+main.add_command(pricing_group)
+
+
+@pricing_group.command("status")
+@click.option("--ledger", default=None, help="Path to pricing ledger JSON (default: bundled data/pricing-history.json)")
+def pricing_status(ledger: str | None) -> None:
+    """Report active/retired records, source metadata, coverage gaps, and Fast aliases."""
+    try:
+        payload = load_pricing_ledger(ledger)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(f"failed to load pricing ledger: {exc}") from exc
+    report = pricing_status_report(payload)
+    for item in report["records"]:
+        period = item["effective_from"] + (" -> " + item["effective_to"] if item["effective_to"] else " -> open")
+        click.echo(
+            f"{item['provider']}/{item['model']} [{item['service_profile']}] {item['status']} "
+            f"{period} source={item['source_url']} retrieved={item['retrieved_at']} confidence={item['confidence']}"
+        )
+    if report["fast_aliases"]:
+        click.echo("fast aliases: " + ", ".join(report["fast_aliases"]))
+    if report["coverage_gaps"]:
+        click.echo("coverage gaps:")
+        for gap in report["coverage_gaps"]:
+            click.echo(f"  {gap}")
+
+
+def _apply_pricing_write(merged: dict, changes: list[str], target: str, yes: bool) -> None:
+    for line in changes:
+        click.echo(f"  {line}")
+    if yes:
+        write_pricing_ledger(target, merged)
+        click.echo(f"written: {target}")
+    else:
+        click.echo(f"preview only; pass --yes to write to {target}")
+
+
+@pricing_group.command("import")
+@click.argument("source", type=click.Path(exists=True, dir_okay=False))
+@click.option("--ledger", default=None, help="Current ledger to merge into (default: bundled data/pricing-history.json)")
+@click.option("--target", required=True, type=click.Path(dir_okay=False), help="Explicit ledger path to write")
+@click.option("--yes", is_flag=True, help="Write the merged ledger to --target (preview only without it)")
+def pricing_import(source: str, ledger: str | None, target: str, yes: bool) -> None:
+    """Import reviewed dated records from a ledger-format JSON file."""
+    try:
+        proposed = load_pricing_ledger(source)["records"]
+        current = load_pricing_ledger(ledger)
+        merged, changes = merge_pricing_history(current, proposed)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(f"import validation failed; ledger unchanged: {exc}") from exc
+    _apply_pricing_write(merged, changes, target, yes)
+
+
+@pricing_group.command("refresh")
+@click.option(
+    "--source-url",
+    default="https://platform.openai.com/docs/pricing",
+    show_default=True,
+    help="Official OpenAI pricing source URL (https on openai.com or *.openai.com only)",
+)
+@click.option("--effective-from", default=None, help="Effective date (YYYY-MM-DD or ISO datetime, UTC); default: today UTC")
+@click.option("--ledger", default=None, help="Current ledger to merge into (default: bundled data/pricing-history.json)")
+@click.option("--target", required=True, type=click.Path(dir_okay=False), help="Explicit ledger path to write")
+@click.option("--yes", is_flag=True, help="Write the merged ledger to --target (preview only without it)")
+@click.pass_context
+def pricing_refresh(
+    ctx: click.Context,
+    source_url: str,
+    effective_from: str | None,
+    ledger: str | None,
+    target: str,
+    yes: bool,
+) -> None:
+    """Fetch official OpenAI pricing and propose dated Standard/Fast ledger records."""
+    options = ctx.obj
+    now = datetime.now(UTC)
+    effective = normalize_pricing_date(effective_from or now.strftime("%Y-%m-%d"))
+    retrieved = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+    parts = urlsplit(source_url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not (host == "openai.com" or host.endswith(".openai.com")):
+        raise click.ClickException(
+            f"refresh source must be an official OpenAI https URL (openai.com or *.openai.com): {source_url}"
+        )
+    client = OpencodeApiClient(
+        base_url=f"{parts.scheme}://{parts.netloc}",
+        username=options["username"],
+        password=options["password"],
+        timeout=options["timeout"],
+        retries=options["retries"],
+    )
+    try:
+        page = client.get_text(parts.path or "/", params=parse_qs(parts.query))
+    except ApiClientError as exc:
+        raise click.ClickException(f"refresh fetch failed; ledger unchanged: {exc}") from exc
+    finally:
+        client.close()
+    try:
+        payload = parse_official_openai_pricing_html(page)
+        records = parse_official_openai_pricing(
+            payload,
+            effective_from=effective,
+            retrieved_at=retrieved,
+            source_url=source_url,
+        )
+        current = load_pricing_ledger(ledger)
+        merged, changes = merge_pricing_history(current, records)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(f"refresh validation failed; ledger unchanged: {exc}") from exc
+    _apply_pricing_write(merged, changes, target, yes)
 
 
 def _print_tokenizer_check(provider_id: str, model_id: str, sample_text: str) -> None:
