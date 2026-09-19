@@ -42,7 +42,10 @@
     "future_fallback_calls": 0,
     "default_fallback_calls": 1,
     "unpriced_calls": 0,
-    "coverage_percent": 100.0
+    "coverage_percent": 100.0,
+    "tier_applied_calls": 0,
+    "base_rate_calls": 1,
+    "tier_unknown_calls": 0
   },
   "period_series": [
     {
@@ -72,7 +75,12 @@
       "pricing_provenance": "default",
       "pricing_channels": "",
       "pricing_revisions": "",
-      "pricing_status": "default_fallback"
+      "pricing_status": "default_fallback",
+      "tier_applied_calls": 0,
+      "base_rate_calls": 1,
+      "tier_unknown_calls": 0,
+      "context_tokens": 0,
+      "context_token_source": "incomplete"
     }
   ],
   "by_activity": [
@@ -105,7 +113,10 @@
         "future_fallback_calls": 0,
         "default_fallback_calls": 1,
         "unpriced_calls": 0,
-        "coverage_percent": 100.0
+        "coverage_percent": 100.0,
+        "tier_applied_calls": 0,
+        "base_rate_calls": 1,
+        "tier_unknown_calls": 0
       }
     }
   ],

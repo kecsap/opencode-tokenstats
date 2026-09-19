@@ -419,6 +419,15 @@ def _select_pricing_rate(pricing: ModelPricing, context_tokens: int | None) -> M
     return pricing
 
 
+def tier_applicability(pricing: ModelPricing, context_tokens: int | None) -> str:
+    """Classify whether context telemetry selected a configured pricing tier."""
+    if not pricing.tiers and pricing.context_over_200k is None:
+        return "base"
+    if context_tokens is None:
+        return "unknown"
+    return "applied" if _select_pricing_rate(pricing, context_tokens) is not pricing else "base"
+
+
 def canonical_model_keys(model: str) -> list[str]:
     raw = (model or "").strip().lower()
     if not raw:

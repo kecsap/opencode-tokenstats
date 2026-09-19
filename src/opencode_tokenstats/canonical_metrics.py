@@ -8,7 +8,7 @@ from .content_attribution import collect_content_attribution
 from .cost import build_default_pricing_lookup
 from .activity_classifier import classify_turn, extract_assistant_activity, extract_user_text
 from .telemetry import TelemetryCall, collect_telemetry_calls, summarize_telemetry
-from .pricing import PricingLookup, estimate_session_cost_usd
+from .pricing import PricingLookup, estimate_session_cost_usd, tier_applicability
 from .pricing import load_local_model_patterns
 
 import fnmatch
@@ -213,6 +213,33 @@ def _build_activity_rows(
                 "calls": len(calls),
                 "api_cost": sum(call.cost for call in calls) if include_actual_cost else 0.0,
                 "estimated_cost": estimated_cost,
+                "tier_applicability": [
+                    {
+                        "status": (
+                            tier_applicability(
+                                pricing_lookup.resolve_call_pricing(
+                                    PricingLookup.build_lookup_key(call.provider_id, call.model_id)
+                                    or fallback_model,
+                                    call.timestamp_ms,
+                                ).pricing,
+                                (call.input_tokens + call.cache_read_tokens + call.cache_write_tokens)
+                                if call.context_tokens_complete else None,
+                            )
+                            if pricing_lookup.resolve_call_pricing(
+                                PricingLookup.build_lookup_key(call.provider_id, call.model_id)
+                                or fallback_model,
+                                call.timestamp_ms,
+                            ).pricing is not None
+                            else "unknown"
+                        ),
+                        "context_tokens": (
+                            call.input_tokens + call.cache_read_tokens + call.cache_write_tokens
+                            if call.context_tokens_complete else None
+                        ),
+                        "context_token_source": "input_plus_cache" if call.context_tokens_complete else "incomplete",
+                    }
+                    for call in calls
+                ],
             }
         )
         tools = set()
@@ -291,12 +318,18 @@ def _build_pricing_coverage(per_model_costs: list[dict[str, Any]]) -> dict[str, 
     future_fallback_calls = 0
     default_fallback_calls = 0
     unpriced_calls = 0
+    tier_applied_calls = 0
+    base_rate_calls = 0
+    tier_unknown_calls = 0
     for row in per_model_costs:
         total_calls += int(row.get("priced_calls", 0)) + int(row.get("unpriced_calls", 0))
         priced_calls += int(row.get("priced_calls", 0))
         future_fallback_calls += int(row.get("future_fallback_calls", 0))
         default_fallback_calls += int(row.get("default_fallback_calls", 0))
         unpriced_calls += int(row.get("unpriced_calls", 0))
+        tier_applied_calls += int(row.get("tier_applied_calls", 0))
+        base_rate_calls += int(row.get("base_rate_calls", 0))
+        tier_unknown_calls += int(row.get("tier_unknown_calls", 0))
     return {
         "calls": total_calls,
         "priced_calls": priced_calls,
@@ -304,6 +337,9 @@ def _build_pricing_coverage(per_model_costs: list[dict[str, Any]]) -> dict[str, 
         "default_fallback_calls": default_fallback_calls,
         "unpriced_calls": unpriced_calls,
         "coverage_percent": round(priced_calls / total_calls * 100.0, 2) if total_calls else 0.0,
+        "tier_applied_calls": tier_applied_calls,
+        "base_rate_calls": base_rate_calls,
+        "tier_unknown_calls": tier_unknown_calls,
     }
 
 
@@ -360,6 +396,11 @@ def _build_per_model_costs(
                 "provenances": [],
                 "pricing_channels": [],
                 "pricing_revisions": [],
+                "tier_applied_calls": 0,
+                "base_rate_calls": 0,
+                "tier_unknown_calls": 0,
+                "context_tokens": 0,
+                "context_token_sources": [],
             }
             grouped[model_name] = row
         row["tokens"] += call.input_tokens + call.output_tokens + call.reasoning_tokens + call.cache_read_tokens + call.cache_write_tokens
@@ -369,6 +410,23 @@ def _build_per_model_costs(
         row["generated_tokens"] += call.output_tokens + call.reasoning_tokens
         row["api_cost"] += api_cost
         row["estimated_cost"] += estimated_cost
+        tier_status = (
+            tier_applicability(
+                resolution.pricing,
+                context_tokens if call.context_tokens_complete else None,
+            )
+            if resolution.pricing is not None
+            else "unknown"
+        )
+        row[f"{tier_status}_rate_calls" if tier_status == "base" else f"tier_{tier_status}_calls"] += 1
+        if resolution.pricing is not None:
+            if call.context_tokens_complete:
+                row["context_tokens"] += context_tokens
+                source = "input_plus_cache"
+            else:
+                source = "incomplete"
+            if source not in row["context_token_sources"]:
+                row["context_token_sources"].append(source)
         if resolution.pricing is not None:
             row["priced_calls"] += 1
             if resolution.status == "future_fallback":
@@ -416,6 +474,11 @@ def _build_per_model_costs(
                 "pricing_provenance": "; ".join(str(item) for item in row["provenances"]),
                 "pricing_channels": "; ".join(str(item) for item in row["pricing_channels"]),
                 "pricing_revisions": "; ".join(str(item) for item in row["pricing_revisions"]),
+                "tier_applied_calls": int(row["tier_applied_calls"]),
+                "base_rate_calls": int(row["base_rate_calls"]),
+                "tier_unknown_calls": int(row["tier_unknown_calls"]),
+                "context_tokens": int(row["context_tokens"]),
+                "context_token_source": "; ".join(str(item) for item in row["context_token_sources"]),
             }
         )
     rows.sort(key=lambda x: (float(x["api_cost"]), float(x["estimated_cost"])), reverse=True)

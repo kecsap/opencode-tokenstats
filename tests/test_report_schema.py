@@ -322,9 +322,12 @@ def test_report_exposes_pricing_coverage_status_and_provenance(tmp_path, monkeyp
         "priced_calls": 2,
         "future_fallback_calls": 1,
         "default_fallback_calls": 0,
-        "unpriced_calls": 1,
-        "coverage_percent": 66.67,
-    }
+            "unpriced_calls": 1,
+            "coverage_percent": 66.67,
+            "tier_applied_calls": 0,
+            "base_rate_calls": 0,
+            "tier_unknown_calls": 0,
+        }
 
     model = {row["model"]: row for row in report["models"]}["openai/gpt-x"]
     assert model["priced_calls"] == 2
@@ -336,3 +339,37 @@ def test_report_exposes_pricing_coverage_status_and_provenance(tmp_path, monkeyp
     session_row = report["top_sessions"][0]
     assert session_row["pricing_coverage"]["unpriced_calls"] == 1
     assert session_row["pricing_coverage"]["coverage_percent"] == 66.67
+
+
+def test_report_exposes_per_model_tier_and_context_metadata() -> None:
+    metric = replace(
+        _metric(),
+        per_model_costs=[
+            {
+                "model": "gpt-5.3-codex",
+                "tokens": 19,
+                "api_cost": 0.01,
+                "estimated_cost": 0.0,
+                "cost": 0.01,
+                "tier_applied_calls": 2,
+                "base_rate_calls": 1,
+                "tier_unknown_calls": 1,
+                "context_tokens": 200000,
+                "context_token_source": "input_plus_cache; incomplete",
+            }
+        ],
+    )
+    report = build_report_schema(
+        period="daily",
+        mode="local",
+        start=datetime(2026, 1, 1, tzinfo=UTC),
+        end=datetime(2026, 1, 2, tzinfo=UTC),
+        session_metrics=[metric],
+    )
+
+    model = report["models"][0]
+    assert model["tier_applied_calls"] == 2
+    assert model["base_rate_calls"] == 1
+    assert model["tier_unknown_calls"] == 1
+    assert model["context_tokens"] == 200000
+    assert model["context_token_source"] == "input_plus_cache; incomplete"

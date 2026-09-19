@@ -41,6 +41,71 @@ def test_build_canonical_metrics_basic_semantics() -> None:
     assert out.mcp_rows[0]["name"] == "lean-ctx"
 
 
+def test_canonical_metrics_exposes_tier_coverage(monkeypatch, tmp_path) -> None:
+    import json
+
+    pricing_path = tmp_path / "models.json"
+    pricing_path.write_text(json.dumps({
+        "openai/tiered": {
+            "input": 1.0,
+            "output": 1.0,
+            "tiers": [{"input": 2.0, "output": 2.0, "threshold": 100000}],
+        }
+    }))
+    monkeypatch.setenv("OPENCODE_MODEL_PRICING_FILE", str(pricing_path))
+
+    out = build_canonical_metrics("s-tier", [{
+        "role": "assistant",
+        "info": {
+            "providerID": "openai",
+            "modelID": "tiered",
+            "tokens": {"input": 200000, "output": 0, "cache": {"read": 0, "write": 0}},
+            "cost": 0.0,
+        },
+        "parts": [{"type": "text", "text": "ok"}],
+    }])
+
+    row = out.per_model_costs[0]
+    assert row["tier_applied_calls"] == 1
+    assert row["base_rate_calls"] == 0
+    assert row["context_tokens"] == 200000
+    assert row["context_token_source"] == "input_plus_cache"
+    assert out.pricing_coverage["tier_applied_calls"] == 1
+
+
+def test_canonical_metrics_marks_incomplete_context_as_tier_unknown(monkeypatch, tmp_path) -> None:
+    import json
+
+    pricing_path = tmp_path / "models.json"
+    pricing_path.write_text(json.dumps({
+        "openai/tiered": {
+            "input": 1.0,
+            "output": 1.0,
+            "tiers": [{"input": 2.0, "output": 2.0, "threshold": 100000}],
+        }
+    }))
+    monkeypatch.setenv("OPENCODE_MODEL_PRICING_FILE", str(pricing_path))
+
+    out = build_canonical_metrics("s-tier-incomplete", [{
+        "role": "assistant",
+        "info": {
+            "providerID": "openai",
+            "modelID": "tiered",
+            "tokens": {"input": 200000, "output": 0},
+            "cost": 0.0,
+        },
+        "parts": [{"type": "text", "text": "ok"}],
+    }])
+
+    row = out.per_model_costs[0]
+    assert row["tier_unknown_calls"] == 1
+    assert row["tier_applied_calls"] == 0
+    assert row["base_rate_calls"] == 0
+    assert row["context_tokens"] == 0
+    assert row["context_token_source"] == "incomplete"
+    assert out.pricing_coverage["tier_unknown_calls"] == 1
+
+
 def test_future_fallback_pricing_does_not_emit_warning() -> None:
     assert _pricing_warnings([{"model": "openai/gpt-x", "future_fallback_calls": 1}]) == []
 
@@ -1046,4 +1111,7 @@ def test_unknown_model_usage_uses_default_fallback() -> None:
         "default_fallback_calls": 1,
         "unpriced_calls": 0,
         "coverage_percent": 100.0,
+        "tier_applied_calls": 0,
+        "base_rate_calls": 1,
+        "tier_unknown_calls": 0,
     }

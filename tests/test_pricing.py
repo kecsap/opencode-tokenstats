@@ -10,6 +10,7 @@ from opencode_tokenstats.pricing import (
     canonical_model_keys,
     estimate_session_cost_usd,
     load_pricing_lookup,
+    tier_applicability,
 )
 from opencode_tokenstats.pricing import _parse_pricing_history
 
@@ -202,6 +203,19 @@ def test_estimate_session_cost_uses_highest_matching_context_tier() -> None:
         context_tokens=375_000,
     )
     assert cost == pytest.approx(1.3)
+
+
+def test_tier_applicability_is_conservative_for_missing_context() -> None:
+    pricing = ModelPricing(
+        input=1.0,
+        output=1.0,
+        cache_read=0.0,
+        tiers=(ContextPricing(input=2.0, output=2.0, cache_read=0.0, threshold=100_000),),
+    )
+
+    assert tier_applicability(pricing, 200_000) == "applied"
+    assert tier_applicability(pricing, 100_000) == "base"
+    assert tier_applicability(pricing, None) == "unknown"
 
 
 def test_canonical_model_keys_match_converter_style() -> None:

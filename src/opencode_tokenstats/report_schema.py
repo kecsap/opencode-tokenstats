@@ -59,6 +59,9 @@ def build_report_schema(
         "future_fallback_calls": 0,
         "default_fallback_calls": 0,
         "unpriced_calls": 0,
+        "tier_applied_calls": 0,
+        "base_rate_calls": 0,
+        "tier_unknown_calls": 0,
     }
 
     def _new_model_entry() -> dict[str, Any]:
@@ -74,6 +77,11 @@ def build_report_schema(
             "future_fallback_calls": 0,
             "default_fallback_calls": 0,
             "unpriced_calls": 0,
+            "tier_applied_calls": 0,
+            "base_rate_calls": 0,
+            "tier_unknown_calls": 0,
+            "context_tokens": 0,
+            "context_token_sources": [],
             "provenances": [],
             "pricing_channels": [],
             "pricing_revisions": [],
@@ -103,6 +111,14 @@ def build_report_schema(
                 models[model_key]["future_fallback_calls"] += int(row.get("future_fallback_calls", 0))
                 models[model_key]["default_fallback_calls"] += int(row.get("default_fallback_calls", 0))
                 models[model_key]["unpriced_calls"] += int(row.get("unpriced_calls", 0))
+                models[model_key]["tier_applied_calls"] += int(row.get("tier_applied_calls", 0))
+                models[model_key]["base_rate_calls"] += int(row.get("base_rate_calls", 0))
+                models[model_key]["tier_unknown_calls"] += int(row.get("tier_unknown_calls", 0))
+                models[model_key]["context_tokens"] += int(row.get("context_tokens", 0))
+                for value in str(row.get("context_token_source", "")).split(";"):
+                    value = value.strip()
+                    if value and value not in models[model_key]["context_token_sources"]:
+                        models[model_key]["context_token_sources"].append(value)
                 provenance = str(row.get("pricing_provenance", ""))
                 if provenance and provenance not in models[model_key]["provenances"]:
                     models[model_key]["provenances"].append(provenance)
@@ -192,6 +208,11 @@ def build_report_schema(
                 "future_fallback_calls": future_fallback_calls,
                 "default_fallback_calls": default_fallback_calls,
                 "unpriced_calls": unpriced_calls,
+                "tier_applied_calls": int(costs["tier_applied_calls"]),
+                "base_rate_calls": int(costs["base_rate_calls"]),
+                "tier_unknown_calls": int(costs["tier_unknown_calls"]),
+                "context_tokens": int(costs["context_tokens"]),
+                "context_token_source": "; ".join(str(item) for item in costs["context_token_sources"]),
                 "pricing_provenance": "; ".join(str(item) for item in costs["provenances"]),
                 "pricing_channels": "; ".join(str(item) for item in costs["pricing_channels"]),
                 "pricing_revisions": "; ".join(str(item) for item in costs["pricing_revisions"]),
@@ -307,6 +328,9 @@ def build_report_schema(
         "coverage_percent": (
             round(pricing_coverage["priced_calls"] / pricing_calls * 100.0, 2) if pricing_calls else 0.0
         ),
+        "tier_applied_calls": pricing_coverage.get("tier_applied_calls", 0),
+        "base_rate_calls": pricing_coverage.get("base_rate_calls", 0),
+        "tier_unknown_calls": pricing_coverage.get("tier_unknown_calls", 0),
     }
 
     return {

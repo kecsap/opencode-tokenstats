@@ -20,6 +20,7 @@ class TelemetryCall:
     web_search_requests: int = 0
     cost: float = 0.0
     timestamp_ms: int | None = None
+    context_tokens_complete: bool = True
 
     @property
     def total_tokens(self) -> int:
@@ -192,6 +193,12 @@ def _step_finish_calls(parts: list[dict[str, Any]], message: dict[str, Any]) -> 
                 reasoning_tokens=_safe_int(tokens.get("reasoning")),
                 cache_read_tokens=_safe_int(cache.get("read")),
                 cache_write_tokens=_safe_int(cache.get("write")),
+                context_tokens_complete=(
+                    "input" in tokens
+                    and isinstance(tokens.get("cache"), dict)
+                    and "read" in cache
+                    and "write" in cache
+                ),
                 web_search_requests=_safe_int(server_tool_use.get("web_search_requests")),
                 cost=_safe_float(part.get("cost")),
                 timestamp_ms=(
@@ -241,6 +248,12 @@ def _fallback_message_call(message: dict[str, Any]) -> TelemetryCall | None:
         reasoning_tokens=_safe_int(tokens.get("reasoning")),
         cache_read_tokens=_safe_int(cache.get("read")),
         cache_write_tokens=_safe_int(cache.get("write")),
+        context_tokens_complete=(
+            "input" in tokens
+            and isinstance(tokens.get("cache"), dict)
+            and "read" in cache
+            and "write" in cache
+        ),
         web_search_requests=_safe_int(server_tool_use.get("web_search_requests")),
         cost=_safe_float(cost_value),
         timestamp_ms=timestamp_ms,
