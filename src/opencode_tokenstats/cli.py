@@ -807,10 +807,17 @@ def _build_period_report(
         lambda: {
             "api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0.0, "input_tokens": 0.0,
             "output_tokens": 0.0, "reasoning_tokens": 0.0, "generated_tokens": 0.0,
-            "priced_calls": 0, "future_fallback_calls": 0, "unpriced_calls": 0, "provenances": [],
+            "priced_calls": 0, "future_fallback_calls": 0, "default_fallback_calls": 0,
+            "unpriced_calls": 0, "provenances": [],
         }
     )
-    pricing_coverage = {"calls": 0, "priced_calls": 0, "future_fallback_calls": 0, "unpriced_calls": 0}
+    pricing_coverage = {
+        "calls": 0,
+        "priced_calls": 0,
+        "future_fallback_calls": 0,
+        "default_fallback_calls": 0,
+        "unpriced_calls": 0,
+    }
     warnings: list[str] = []
 
     # Activity aggregation maps
@@ -850,6 +857,7 @@ def _build_period_report(
             model_map[model_key]["generated_tokens"] += int(model_row.get("generated_tokens", 0))
             model_map[model_key]["priced_calls"] += int(model_row.get("priced_calls", 0))
             model_map[model_key]["future_fallback_calls"] += int(model_row.get("future_fallback_calls", 0))
+            model_map[model_key]["default_fallback_calls"] += int(model_row.get("default_fallback_calls", 0))
             model_map[model_key]["unpriced_calls"] += int(model_row.get("unpriced_calls", 0))
             provenance = str(model_row.get("pricing_provenance", ""))
             if provenance and provenance not in model_map[model_key]["provenances"]:
@@ -1012,6 +1020,7 @@ def _build_period_report(
             "calls": pricing_coverage["calls"],
             "priced_calls": pricing_coverage["priced_calls"],
             "future_fallback_calls": pricing_coverage["future_fallback_calls"],
+            "default_fallback_calls": pricing_coverage["default_fallback_calls"],
             "unpriced_calls": pricing_coverage["unpriced_calls"],
             "coverage_percent": (
                 round(pricing_coverage["priced_calls"] / pricing_coverage["calls"] * 100.0, 2)
@@ -1787,7 +1796,8 @@ def _accumulate_model_cost_rows(
         lambda: {
             "api_cost": 0.0, "estimated_cost": 0.0, "tokens": 0.0, "input_tokens": 0.0,
             "output_tokens": 0.0, "reasoning_tokens": 0.0, "generated_tokens": 0.0,
-            "priced_calls": 0, "future_fallback_calls": 0, "unpriced_calls": 0, "provenances": [],
+            "priced_calls": 0, "future_fallback_calls": 0, "default_fallback_calls": 0,
+            "unpriced_calls": 0, "provenances": [],
         }
     )
     for row in model_rows:
@@ -1801,6 +1811,7 @@ def _accumulate_model_cost_rows(
         model_map[model_id]["generated_tokens"] += float(row.get("generated_tokens", 0.0))
         model_map[model_id]["priced_calls"] += int(row.get("priced_calls", 0))
         model_map[model_id]["future_fallback_calls"] += int(row.get("future_fallback_calls", 0))
+        model_map[model_id]["default_fallback_calls"] += int(row.get("default_fallback_calls", 0))
         model_map[model_id]["unpriced_calls"] += int(row.get("unpriced_calls", 0))
         provenance = str(row.get("pricing_provenance", ""))
         if provenance and provenance not in model_map[model_id]["provenances"]:
@@ -1823,13 +1834,16 @@ def _finalize_model_costs(model_map: dict[str, dict[str, Any]]) -> list[dict[str
         generated_tokens = int(costs.get("generated_tokens", 0))
         priced_calls = int(costs.get("priced_calls", 0) or 0)
         future_fallback_calls = int(costs.get("future_fallback_calls", 0) or 0)
+        default_fallback_calls = int(costs.get("default_fallback_calls", 0) or 0)
         unpriced_calls = int(costs.get("unpriced_calls", 0) or 0)
-        if priced_calls + future_fallback_calls + unpriced_calls == 0:
+        if priced_calls + future_fallback_calls + default_fallback_calls + unpriced_calls == 0:
             pricing_status = "unknown"
         elif priced_calls == 0:
             pricing_status = "unpriced"
         elif future_fallback_calls > 0:
             pricing_status = "future_fallback"
+        elif default_fallback_calls > 0:
+            pricing_status = "default_fallback"
         elif unpriced_calls > 0:
             pricing_status = "unpriced"
         else:
@@ -1847,6 +1861,7 @@ def _finalize_model_costs(model_map: dict[str, dict[str, Any]]) -> list[dict[str
                 "cost": round(primary_cost, 6),
                 "priced_calls": priced_calls,
                 "future_fallback_calls": future_fallback_calls,
+                "default_fallback_calls": default_fallback_calls,
                 "unpriced_calls": unpriced_calls,
                 "pricing_provenance": "; ".join(str(item) for item in costs.get("provenances", [])),
                 "pricing_status": pricing_status,

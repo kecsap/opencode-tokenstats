@@ -386,21 +386,25 @@ def test_resolve_call_pricing_before_first_period_is_future_fallback() -> None:
     assert resolution.provenance == "https://example.com/old"
 
 
-def test_resolve_call_pricing_unknown_retired_and_missing_timestamp_are_unpriced() -> None:
+def test_resolve_call_pricing_unknown_retired_and_missing_timestamp_use_default_fallback() -> None:
     data, history = _parse_pricing_history(_two_period_payload())
     lookup = PricingLookup(data, history, flat_keys=frozenset())
 
     unknown = lookup.resolve_call_pricing("openai/never-seen", _ms("2026-03-15T00:00:00Z"))
-    assert unknown.status == "unpriced"
-    assert unknown.pricing is None
+    assert unknown.status == "default_fallback"
+    assert unknown.pricing is not None
+    assert unknown.pricing.input == 1.0
+    assert unknown.pricing.output == 3.0
+    assert unknown.provenance == "default"
 
     retired = lookup.resolve_call_pricing("openai/gpt-y", _ms("2026-03-15T00:00:00Z"))
-    assert retired.status == "unpriced"
-    assert retired.pricing is None
+    assert retired.status == "default_fallback"
+    assert retired.pricing is not None
 
     no_timestamp = lookup.resolve_call_pricing("openai/gpt-x", None)
-    assert no_timestamp.status == "unpriced"
-    assert no_timestamp.pricing is None
+    assert no_timestamp.status == "default_fallback"
+    assert no_timestamp.pricing is not None
+
 
 
 def test_resolve_call_pricing_flat_override_applies_without_timestamp() -> None:

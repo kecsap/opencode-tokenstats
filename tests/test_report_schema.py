@@ -321,6 +321,7 @@ def test_report_exposes_pricing_coverage_status_and_provenance(tmp_path, monkeyp
         "calls": 3,
         "priced_calls": 2,
         "future_fallback_calls": 1,
+        "default_fallback_calls": 0,
         "unpriced_calls": 1,
         "coverage_percent": 66.67,
     }

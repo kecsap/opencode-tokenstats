@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from opencode_tokenstats.canonical_metrics import build_canonical_metrics, _build_component_family_rows
+from opencode_tokenstats.canonical_metrics import build_canonical_metrics, _build_component_family_rows, _pricing_warnings
 from opencode_tokenstats.content_attribution import collect_content_attribution
 
 
@@ -39,6 +39,10 @@ def test_build_canonical_metrics_basic_semantics() -> None:
     assert out.tool_rows[0]["tool"] == "lean-ctx_ctx_search"
     assert out.component_rows[0]["component_group"] == "lean-ctx"
     assert out.mcp_rows[0]["name"] == "lean-ctx"
+
+
+def test_future_fallback_pricing_does_not_emit_warning() -> None:
+    assert _pricing_warnings([{"model": "openai/gpt-x", "future_fallback_calls": 1}]) == []
 
 
 def test_canonical_metrics_extracts_skill_and_subagent_components() -> None:
@@ -172,10 +176,8 @@ def test_local_model_cost_is_zero(tmp_path) -> None:
         out = build_canonical_metrics("s-local", messages)
         assert out.model == "myollama/qwen3.6:35b-yarn"
         assert out.actual_cost_usd == 0.0  # API cost should be 0 for local models
-        # Local model has no pricing record: reported unpriced instead of guessed
         assert out.estimated_cost_usd == 0.0
-        assert out.pricing_coverage["unpriced_calls"] == 1
-        assert any(w.startswith("pricing:") for w in out.warnings)
+        assert out.pricing_coverage["default_fallback_calls"] == 1
     finally:
         if old_env is None:
             os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)
@@ -258,7 +260,20 @@ def test_estimated_cost_uses_per_call_models(tmp_path) -> None:
             os.environ["OPENCODE_MODEL_PRICING_FILE"] = old_pricing_env
 
 
-def test_per_model_costs_keep_api_only_for_trusted_billed_model_rows() -> None:
+def test_per_model_costs_keep_api_only_for_trusted_billed_model_rows(tmp_path, monkeypatch) -> None:
+    import json
+
+    pricing_path = tmp_path / "models.json"
+    pricing_path.write_text(
+        json.dumps(
+            {
+                "openai/gpt-5.4-mini-fast": {"input": 1.0, "output": 3.0},
+                "openai/gpt-5.4": {"input": 1.0, "output": 3.0},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCODE_MODEL_PRICING_FILE", str(pricing_path))
+
     messages = [
         {
             "role": "assistant",
@@ -298,9 +313,13 @@ def test_per_model_costs_keep_api_only_for_trusted_billed_model_rows() -> None:
     model_rows = {row["model"]: row for row in out.per_model_costs}
     assert model_rows["openai/gpt-5.4-mini-fast"]["api_cost"] == 0.0
     assert model_rows["openai/gpt-5.4-mini-fast"]["cost"] == model_rows["openai/gpt-5.4-mini-fast"]["estimated_cost"]
+    assert model_rows["openai/gpt-5.4-mini-fast"]["estimated_cost"] > 0
     assert model_rows["openai/gpt-5.4"]["api_cost"] == 12.34
     assert model_rows["openai/gpt-5.4"]["estimated_cost"] == 0.0
     assert model_rows["openai/gpt-5.4"]["cost"] == 12.34
+    assert round(out.estimated_cost_usd, 6) == model_rows["openai/gpt-5.4-mini-fast"]["estimated_cost"]
+    assert sum(row["api_cost"] for row in out.activity_rows) == 12.34
+    assert round(sum(row["estimated_cost"] for row in out.activity_rows), 6) == round(out.estimated_cost_usd, 6)
 
 
 def test_per_model_costs_exclude_zero_usage_plugin_calls() -> None:
@@ -998,7 +1017,7 @@ def test_estimated_cost_uses_call_time_pricing_periods(monkeypatch) -> None:
     assert out.pricing_coverage["coverage_percent"] == 100.0
 
 
-def test_unknown_model_usage_is_unpriced_not_guessed() -> None:
+def test_unknown_model_usage_uses_default_fallback() -> None:
     messages = [
         {
             "role": "assistant",
@@ -1013,16 +1032,18 @@ def test_unknown_model_usage_is_unpriced_not_guessed() -> None:
 
     out = build_canonical_metrics("s-unpriced", messages)
     assert out.actual_cost_usd == 0.0
-    assert out.estimated_cost_usd == 0.0
+    assert out.estimated_cost_usd == 0.000265
     row = out.per_model_costs[0]
-    assert row["priced_calls"] == 0
-    assert row["unpriced_calls"] == 1
-    assert row["pricing_provenance"] == ""
+    assert row["priced_calls"] == 1
+    assert row["default_fallback_calls"] == 1
+    assert row["unpriced_calls"] == 0
+    assert row["pricing_provenance"] == "default"
+    assert not any("unpriced" in warning for warning in out.warnings)
     assert out.pricing_coverage == {
         "calls": 1,
-        "priced_calls": 0,
+        "priced_calls": 1,
         "future_fallback_calls": 0,
-        "unpriced_calls": 1,
-        "coverage_percent": 0.0,
+        "default_fallback_calls": 1,
+        "unpriced_calls": 0,
+        "coverage_percent": 100.0,
     }
-    assert any(w.startswith("pricing:") for w in out.warnings)

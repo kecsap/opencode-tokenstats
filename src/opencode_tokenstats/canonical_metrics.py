@@ -64,7 +64,7 @@ def build_canonical_metrics(
         fallback_model=model,
         pricing_lookup=pricing_lookup,
         include_actual_cost=not is_local_model,
-        include_estimated_cost=not (not is_local_model and telemetry.total_cost > 0),
+        include_estimated_cost=True,
     )
     per_model_costs = _build_per_model_costs(telemetry_calls, fallback_model=model, pricing_lookup=pricing_lookup)
     pricing_coverage = _build_pricing_coverage(per_model_costs)
@@ -151,7 +151,7 @@ def build_canonical_metrics(
         session_total_tokens=telemetry.total_tokens,
         api_calls=telemetry.api_calls,
         actual_cost_usd=0.0 if is_local_model else telemetry.total_cost,
-        estimated_cost_usd=0.0 if (not is_local_model and telemetry.total_cost > 0) else estimated_session_cost,
+        estimated_cost_usd=estimated_session_cost,
         token_composition=token_composition,
         component_rows=component_rows,
         component_family_rows=component_family_rows,
@@ -263,6 +263,8 @@ def _estimate_session_cost_per_call(
 ) -> float:
     total = 0.0
     for call in calls:
+        if call.cost > 0:
+            continue
         model_name = PricingLookup.build_lookup_key(call.provider_id, call.model_id)
         if not model_name:
             model_name = fallback_model
@@ -287,35 +289,26 @@ def _build_pricing_coverage(per_model_costs: list[dict[str, Any]]) -> dict[str, 
     total_calls = 0
     priced_calls = 0
     future_fallback_calls = 0
+    default_fallback_calls = 0
     unpriced_calls = 0
     for row in per_model_costs:
         total_calls += int(row.get("priced_calls", 0)) + int(row.get("unpriced_calls", 0))
         priced_calls += int(row.get("priced_calls", 0))
         future_fallback_calls += int(row.get("future_fallback_calls", 0))
+        default_fallback_calls += int(row.get("default_fallback_calls", 0))
         unpriced_calls += int(row.get("unpriced_calls", 0))
     return {
         "calls": total_calls,
         "priced_calls": priced_calls,
         "future_fallback_calls": future_fallback_calls,
+        "default_fallback_calls": default_fallback_calls,
         "unpriced_calls": unpriced_calls,
         "coverage_percent": round(priced_calls / total_calls * 100.0, 2) if total_calls else 0.0,
     }
 
 
 def _pricing_warnings(per_model_costs: list[dict[str, Any]]) -> list[str]:
-    warnings: list[str] = []
-    for row in per_model_costs:
-        unpriced = int(row.get("unpriced_calls", 0))
-        if unpriced > 0:
-            warnings.append(
-                f"pricing: {row['model']}: {unpriced} API call(s) unpriced (unknown or retired model)"
-            )
-        future_fallback = int(row.get("future_fallback_calls", 0))
-        if future_fallback > 0:
-            warnings.append(
-                f"pricing: {row['model']}: {future_fallback} API call(s) priced with future fallback (earliest later rate)"
-            )
-    return warnings
+    return []
 
 
 def _build_per_model_costs(
@@ -334,7 +327,9 @@ def _build_per_model_costs(
         resolution = pricing_lookup.resolve_call_pricing(model_name, call.timestamp_ms)
         context_tokens = call.input_tokens + call.cache_read_tokens + call.cache_write_tokens
         api_cost = call.cost
-        if resolution.pricing is not None:
+        if api_cost > 0:
+            estimated_cost = 0.0
+        elif resolution.pricing is not None:
             estimated_cost = estimate_session_cost_usd(
                 resolution.pricing,
                 input_tokens=call.input_tokens,
@@ -360,6 +355,7 @@ def _build_per_model_costs(
                 "estimated_cost": 0.0,
                 "priced_calls": 0,
                 "future_fallback_calls": 0,
+                "default_fallback_calls": 0,
                 "unpriced_calls": 0,
                 "provenances": [],
             }
@@ -375,6 +371,8 @@ def _build_per_model_costs(
             row["priced_calls"] += 1
             if resolution.status == "future_fallback":
                 row["future_fallback_calls"] += 1
+            if resolution.status == "default_fallback":
+                row["default_fallback_calls"] += 1
             if resolution.provenance and resolution.provenance not in row["provenances"]:
                 row["provenances"].append(resolution.provenance)
         else:
@@ -403,10 +401,11 @@ def _build_per_model_costs(
                 "generated_tokens": generated_tokens,
                 "reasoning_percent": round(reasoning_tokens / generated_tokens * 100.0, 2) if generated_tokens else 0.0,
                 "api_cost": round(api_cost, 6),
-                "estimated_cost": round(estimated_cost if api_cost <= 0 else 0.0, 6),
+                "estimated_cost": round(estimated_cost, 6),
                 "cost": round(primary_cost, 6),
                 "priced_calls": int(row["priced_calls"]),
                 "future_fallback_calls": int(row["future_fallback_calls"]),
+                "default_fallback_calls": int(row["default_fallback_calls"]),
                 "unpriced_calls": int(row["unpriced_calls"]),
                 "pricing_provenance": "; ".join(str(item) for item in row["provenances"]),
             }

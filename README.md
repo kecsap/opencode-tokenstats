@@ -250,11 +250,11 @@ octoken pricing refresh --effective-from 2026-09-18 --target my-ledger.json --ye
 
 Each API call in a report shows an `API` cost (what the OpenCode telemetry actually reported) and an `Est.` cost (computed from the rate active at the call's timestamp):
 
-- A reported positive `API` cost is authoritative: it takes precedence over the estimate, and the model row's `Est.` cost is zeroed. Estimates fill in only model rows without a reported API cost.
-- For known models, the ledger record whose effective period contains the call's timestamp wins.
+- A reported positive `API` cost is authoritative: it takes precedence over the estimate, and the model row's `Est.` cost is zeroed. Estimates apply only to calls without a reported API cost.
+- For known models, the historical ledger record whose effective period contains the call's timestamp wins.
 - A call before the first known period uses the earliest later rate and is counted as `future-fallback`, with a warning.
-- Unknown models, calls with no timestamp, and calls after every known period are `unpriced` (they add $0 to estimates) unless a flat rate file (`OPENCODE_MODEL_PRICING_FILE` or a local `models.json`) supplies a rate.
-- The session report prints `Pricing coverage: NN% (n priced, n unpriced, n future-fallback)`. With partial coverage, estimated totals are a floor, not a bill.
+- Calls without a matching historical record use a flat rate from `OPENCODE_MODEL_PRICING_FILE` or a local `models.json` when available; otherwise they use legacy default rates for estimation. These fallback estimates do not add unpriced warning noise.
+- The session report prints `Pricing coverage: NN% (n priced, n unpriced, n future-fallback)`. Estimated totals remain estimates, not bills.
 
 Current official rates do not prove what you were billed historically: ledger records are observations tied to effective dates, and anything before the first observed record is an estimate. To correct historical rates, add dated records via `pricing import`.
 

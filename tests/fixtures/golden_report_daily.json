@@ -35,15 +35,14 @@
       }
     ]
   },
-  "warnings": [
-    "pricing: openai/gpt-5.3-codex: 1 API call(s) unpriced (unknown or retired model)"
-  ],
+  "warnings": [],
   "pricing": {
     "calls": 1,
-    "priced_calls": 0,
+    "priced_calls": 1,
     "future_fallback_calls": 0,
-    "unpriced_calls": 1,
-    "coverage_percent": 0.0
+    "default_fallback_calls": 1,
+    "unpriced_calls": 0,
+    "coverage_percent": 100.0
   },
   "period_series": [
     {
@@ -66,11 +65,12 @@
       "api_cost": 0.012,
       "estimated_cost": 0.0,
       "cost": 0.012,
-      "priced_calls": 0,
+      "priced_calls": 1,
       "future_fallback_calls": 0,
-      "unpriced_calls": 1,
-      "pricing_provenance": "",
-      "pricing_status": "unpriced"
+      "default_fallback_calls": 1,
+      "unpriced_calls": 0,
+      "pricing_provenance": "default",
+      "pricing_status": "default_fallback"
     }
   ],
   "by_activity": [
@@ -99,10 +99,11 @@
       "estimated_cost": 0.0,
       "pricing_coverage": {
         "calls": 1,
-        "priced_calls": 0,
+        "priced_calls": 1,
         "future_fallback_calls": 0,
-        "unpriced_calls": 1,
-        "coverage_percent": 0.0
+        "default_fallback_calls": 1,
+        "unpriced_calls": 0,
+        "coverage_percent": 100.0
       }
     }
   ],

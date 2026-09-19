@@ -175,7 +175,7 @@ class PricingRecord:
 class PricingResolution:
     """Result of resolving the rate active for one telemetry call.
 
-    status is one of: "active", "future_fallback", "flat_override", "unpriced".
+    status is one of: "active", "future_fallback", "flat_override", "default_fallback", "unpriced".
     """
 
     pricing: ModelPricing | None
@@ -260,9 +260,9 @@ class PricingLookup:
         """Resolve the rate active for one call at its timestamp.
 
         Historical records win for known models; calls before the first known
-        record use the earliest later record ("future_fallback"); unknown,
-        retired, or timestamp-less calls are unpriced unless an explicit
-        flat-file override exists.
+        record use the earliest later record ("future_fallback"). Unknown,
+        retired, or timestamp-less calls use the legacy default unless an
+        explicit flat-file override exists.
         """
         raw_name = (model_name or "").strip().lower()
         if not raw_name:
@@ -282,7 +282,11 @@ class PricingLookup:
         pricing, key = self._find_pricing_key(raw_name)
         if pricing is not None and key is not None and key in self.flat_keys:
             return PricingResolution(pricing=pricing, status="flat_override", provenance=f"flat:{key}")
-        return self._unpriced_resolution()
+        return PricingResolution(
+            pricing=self.pricing_data.get("default", _default_pricing()),
+            status="default_fallback",
+            provenance="default",
+        )
 
     @staticmethod
     def _unpriced_resolution() -> PricingResolution:

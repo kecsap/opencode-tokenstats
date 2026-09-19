@@ -53,7 +53,13 @@ def build_report_schema(
     skills: dict[str, int] = {}
     subagents: dict[str, int] = {}
     warnings: list[str] = []
-    pricing_coverage = {"calls": 0, "priced_calls": 0, "future_fallback_calls": 0, "unpriced_calls": 0}
+    pricing_coverage = {
+        "calls": 0,
+        "priced_calls": 0,
+        "future_fallback_calls": 0,
+        "default_fallback_calls": 0,
+        "unpriced_calls": 0,
+    }
 
     def _new_model_entry() -> dict[str, Any]:
         return {
@@ -66,6 +72,7 @@ def build_report_schema(
             "generated_tokens": 0,
             "priced_calls": 0,
             "future_fallback_calls": 0,
+            "default_fallback_calls": 0,
             "unpriced_calls": 0,
             "provenances": [],
         }
@@ -92,6 +99,7 @@ def build_report_schema(
                 models[model_key]["generated_tokens"] += int(row.get("generated_tokens", 0))
                 models[model_key]["priced_calls"] += int(row.get("priced_calls", 0))
                 models[model_key]["future_fallback_calls"] += int(row.get("future_fallback_calls", 0))
+                models[model_key]["default_fallback_calls"] += int(row.get("default_fallback_calls", 0))
                 models[model_key]["unpriced_calls"] += int(row.get("unpriced_calls", 0))
                 provenance = str(row.get("pricing_provenance", ""))
                 if provenance and provenance not in models[model_key]["provenances"]:
@@ -148,13 +156,16 @@ def build_report_schema(
         generated_tokens = int(costs["generated_tokens"])
         priced_calls = int(costs["priced_calls"])
         future_fallback_calls = int(costs["future_fallback_calls"])
+        default_fallback_calls = int(costs["default_fallback_calls"])
         unpriced_calls = int(costs["unpriced_calls"])
-        if priced_calls + future_fallback_calls + unpriced_calls == 0:
+        if priced_calls + future_fallback_calls + default_fallback_calls + unpriced_calls == 0:
             pricing_status = "unknown"
         elif priced_calls == 0:
             pricing_status = "unpriced"
         elif future_fallback_calls > 0:
             pricing_status = "future_fallback"
+        elif default_fallback_calls > 0:
+            pricing_status = "default_fallback"
         elif unpriced_calls > 0:
             pricing_status = "unpriced"
         else:
@@ -172,6 +183,7 @@ def build_report_schema(
                 "cost": round(primary_cost, 6),
                 "priced_calls": priced_calls,
                 "future_fallback_calls": future_fallback_calls,
+                "default_fallback_calls": default_fallback_calls,
                 "unpriced_calls": unpriced_calls,
                 "pricing_provenance": "; ".join(str(item) for item in costs["provenances"]),
                 "pricing_status": pricing_status,
@@ -281,6 +293,7 @@ def build_report_schema(
         "calls": pricing_calls,
         "priced_calls": pricing_coverage["priced_calls"],
         "future_fallback_calls": pricing_coverage["future_fallback_calls"],
+        "default_fallback_calls": pricing_coverage["default_fallback_calls"],
         "unpriced_calls": pricing_coverage["unpriced_calls"],
         "coverage_percent": (
             round(pricing_coverage["priced_calls"] / pricing_calls * 100.0, 2) if pricing_calls else 0.0
