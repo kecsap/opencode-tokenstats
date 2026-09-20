@@ -10,10 +10,12 @@ from opencode_tokenstats.pricing import (
     canonical_model_keys,
     estimate_session_cost_usd,
     load_pricing_lookup,
+    load_model_equivalence_rules,
     reset_pricing_lookup_cache,
+    resolve_market_model,
     tier_applicability,
 )
-from opencode_tokenstats.pricing import _parse_pricing_history
+from opencode_tokenstats.pricing import PricingRecord, _parse_pricing_history
 
 
 def test_build_lookup_key_normalization() -> None:
@@ -295,6 +297,79 @@ def test_load_local_model_patterns(tmp_path) -> None:
             os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = old_env
 
 
+def test_load_model_equivalence_rules_and_precedence(tmp_path) -> None:
+    conf = tmp_path / "models.conf"
+    conf.write_text(
+        "@market-model qwen3.8-27b* = catalog/old\n"
+        "@market-model qwen3.8* = catalog/wild\n"
+        "@market-model qwen3.8-27b = catalog/exact\n"
+        "@cloud-equivalent qwen3.8-27b catalog/cloud\n"
+    )
+    rules = load_model_equivalence_rules(str(conf))
+    assert len(rules) == 4
+    assert rules[0].targets == ("catalog/old",)
+    assert rules[2].source == "qwen3.8-27b"
+
+
+def test_resolve_market_model_matches_normalized_model_and_aliases(tmp_path) -> None:
+    conf = tmp_path / "models.conf"
+    conf.write_text("@market-model qwen3.8-27b = catalog/qwen3.8-27b\n")
+    record = PricingRecord(
+        provider="catalog",
+        model="QWEN-3.8-27B-whatever",
+        service_profile="standard",
+        context="short",
+        effective_from="2026-01-01",
+        effective_to=None,
+        status="active",
+        confidence="observed",
+        source_url="",
+        retrieved_at="",
+        pricing=ModelPricing(1, 1, 0),
+        aliases=("catalog/qwen_3_8_27b",),
+    )
+    rules = load_model_equivalence_rules(str(conf))
+    assert resolve_market_model("local/QWEN_3.8_27B", (record,), rules) is record
+
+
+def test_unavailable_market_rule_uses_cloud_equivalent_not_automatic_match(tmp_path) -> None:
+    conf = tmp_path / "models.conf"
+    conf.write_text(
+        "@market-model qwen3.8-27b = catalog/missing\n"
+        "@cloud-equivalent qwen3.8-27b = catalog/cloud\n"
+    )
+    automatic = PricingRecord(
+        provider="catalog",
+        model="qwen3.8-27b",
+        service_profile="standard",
+        context="short",
+        effective_from="2026-01-01",
+        effective_to=None,
+        status="active",
+        confidence="observed",
+        source_url="",
+        retrieved_at="",
+        pricing=ModelPricing(1, 1, 0),
+    )
+    cloud = PricingRecord(
+        provider="catalog",
+        model="cloud-model",
+        service_profile="standard",
+        context="short",
+        effective_from="2026-01-01",
+        effective_to=None,
+        status="active",
+        confidence="observed",
+        source_url="",
+        retrieved_at="",
+        pricing=ModelPricing(1, 1, 0),
+        aliases=("catalog/cloud",),
+    )
+    rules = load_model_equivalence_rules(str(conf))
+    assert resolve_market_model("local/qwen3.8-27b", (automatic, cloud), rules) is cloud
+    assert resolve_market_model("local/qwen3.8-27b", (automatic,), rules) is None
+
+
 def test_load_model_aliases_wildcard(tmp_path) -> None:
     from opencode_tokenstats.pricing import load_model_aliases
     import os
@@ -319,6 +394,106 @@ def test_load_model_aliases_wildcard(tmp_path) -> None:
             os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)
         else:
             os.environ["OPTOKEN_MODEL_ALIAS_FILE"] = old_env
+
+
+def test_local_market_averages_paid_providers_once_and_keeps_basis(tmp_path) -> None:
+    conf = tmp_path / "models.conf"
+    conf.write_text("@local local/*\n@market-model qwen = catalog/qwen\n")
+    records = tuple(
+        PricingRecord(
+            provider=provider,
+            model=model,
+            service_profile="standard",
+            context="short",
+            effective_from="2026-01-01T00:00:00Z",
+            effective_to=None,
+            status="active",
+            confidence="observed",
+            source_url=provider,
+            retrieved_at="2026-01-01T00:00:00Z",
+            pricing=pricing,
+            aliases=("catalog/qwen",),
+        )
+        for provider, model, pricing in (
+            ("alpha", "qwen-a", ModelPricing(2, 4, 1, reasoning=6)),
+            ("alpha", "qwen-a-fast", ModelPricing(100, 100, 100)),
+            ("beta", "qwen-b", ModelPricing(4, 6, 3, reasoning=8)),
+            ("free", "qwen-free", ModelPricing(0, 0, 0)),
+        )
+    )
+    lookup = PricingLookup({"default": ModelPricing(1, 1, 0)}, records, equivalence_rules=load_model_equivalence_rules(str(conf)))
+    result = lookup.resolve_local_call_pricing("local/qwen", _ms("2026-06-01T00:00:00Z"))
+    assert result.pricing == ModelPricing(3, 5, 2, reasoning=7)
+    assert result.provider_count == 2
+    assert result.cost_basis == "market"
+    assert result.market_status == "active"
+
+
+@pytest.mark.parametrize(
+    ("direct_start", "timestamp", "expected_status"),
+    (
+        ("2026-01-01T00:00:00Z", "2026-06-01T00:00:00Z", "active"),
+        ("2027-01-01T00:00:00Z", "2026-06-01T00:00:00Z", "future_fallback"),
+    ),
+)
+def test_direct_historical_pricing_precedes_explicit_market_mapping(
+    tmp_path, direct_start, timestamp, expected_status
+) -> None:
+    conf = tmp_path / "models.conf"
+    conf.write_text("@market-model qwen = catalog/qwen\n")
+    direct = PricingRecord(
+        provider="local",
+        model="local/qwen",
+        service_profile="standard",
+        context="short",
+        effective_from=direct_start,
+        effective_to=None,
+        status="active",
+        confidence="observed",
+        source_url="local",
+        retrieved_at=direct_start,
+        pricing=ModelPricing(9, 9, 0),
+    )
+    hosted = PricingRecord(
+        provider="hosted",
+        model="qwen",
+        service_profile="standard",
+        context="short",
+        effective_from="2026-01-01T00:00:00Z",
+        effective_to=None,
+        status="active",
+        confidence="observed",
+        source_url="hosted",
+        retrieved_at="2026-01-01T00:00:00Z",
+        pricing=ModelPricing(2, 2, 0),
+        aliases=("catalog/qwen",),
+    )
+    lookup = PricingLookup(
+        {"default": ModelPricing(1, 1, 0)},
+        (direct, hosted),
+        equivalence_rules=load_model_equivalence_rules(str(conf)),
+    )
+
+    result = lookup.resolve_local_call_pricing("local/qwen", _ms(timestamp))
+
+    assert result.status == expected_status
+    assert result.pricing == ModelPricing(9, 9, 0)
+
+
+def test_local_market_uses_earliest_future_date(tmp_path) -> None:
+    conf = tmp_path / "models.conf"
+    conf.write_text("@market-model qwen = catalog/qwen\n")
+    record = PricingRecord(
+        provider="alpha", model="qwen", service_profile="standard", context="short",
+        effective_from="2027-01-01T00:00:00Z", effective_to=None, status="active",
+        confidence="observed", source_url="alpha", retrieved_at="2027-01-01T00:00:00Z",
+        pricing=ModelPricing(2, 3, 0), aliases=("catalog/qwen",),
+    )
+    lookup = PricingLookup({"default": ModelPricing(1, 1, 0)}, (record,), equivalence_rules=load_model_equivalence_rules(str(conf)))
+    result = lookup.resolve_local_call_pricing("local/qwen", _ms("2026-06-01T00:00:00Z"))
+    assert result.status == "future_fallback"
+    assert result.market_status == "future"
+    assert result.rate_date == "2027-01-01T00:00:00Z"
 
 
 def test_resolve_alias_exact_match() -> None:

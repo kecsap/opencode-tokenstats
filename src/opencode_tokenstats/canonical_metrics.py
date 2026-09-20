@@ -288,7 +288,10 @@ def _resolve_calls(
     resolved: list[_ResolvedCall] = []
     for call in calls:
         model_name = PricingLookup.build_lookup_key(call.provider_id, call.model_id) or fallback_model
-        resolution = pricing_lookup.resolve_call_pricing(model_name, call.timestamp_ms)
+        if _is_local_model(model_name):
+            resolution = pricing_lookup.resolve_local_call_pricing(model_name, call.timestamp_ms)
+        else:
+            resolution = pricing_lookup.resolve_call_pricing(model_name, call.timestamp_ms)
         context_tokens = call.input_tokens + call.cache_read_tokens + call.cache_write_tokens
         tier_status = (
             tier_applicability(resolution.pricing, context_tokens if call.context_tokens_complete else None)
@@ -370,6 +373,16 @@ def _build_per_model_costs(
                 "generated_tokens": 0,
                 "api_cost": 0.0,
                 "estimated_cost": 0.0,
+                "estimated_direct_cost": 0.0,
+                "estimated_generic_cost": 0.0,
+                "estimated_market_cost": 0.0,
+                "estimated_future_market_cost": 0.0,
+                "estimated_cloud_equivalent_cost": 0.0,
+                "direct_estimate_calls": 0,
+                "generic_estimate_calls": 0,
+                "market_estimate_calls": 0,
+                "future_market_estimate_calls": 0,
+                "cloud_equivalent_estimate_calls": 0,
                 "priced_calls": 0,
                 "future_fallback_calls": 0,
                 "default_fallback_calls": 0,
@@ -377,6 +390,10 @@ def _build_per_model_costs(
                 "provenances": [],
                 "pricing_channels": [],
                 "pricing_revisions": [],
+                "market_provider_counts": [],
+                "market_rate_dates": [],
+                "market_statuses": [],
+                "cost_bases": [],
                 "tier_applied_calls": 0,
                 "base_rate_calls": 0,
                 "tier_unknown_calls": 0,
@@ -391,6 +408,21 @@ def _build_per_model_costs(
         row["generated_tokens"] += call.output_tokens + call.reasoning_tokens
         row["api_cost"] += api_cost
         row["estimated_cost"] += estimated_cost
+        basis = resolution.cost_basis.lower()
+        channel = resolution.billing_channel.lower()
+        if resolution.status == "default_fallback":
+            amount_key, count_key = "estimated_generic_cost", "generic_estimate_calls"
+        elif resolution.market_status == "future" or resolution.status == "future_fallback":
+            amount_key, count_key = "estimated_future_market_cost", "future_market_estimate_calls"
+        elif basis == "market" or channel == "market":
+            amount_key, count_key = "estimated_market_cost", "market_estimate_calls"
+        elif "cloud" in basis or "cloud" in channel:
+            amount_key, count_key = "estimated_cloud_equivalent_cost", "cloud_equivalent_estimate_calls"
+        else:
+            amount_key, count_key = "estimated_direct_cost", "direct_estimate_calls"
+        row[amount_key] += estimated_cost
+        if estimated_cost > 0:
+            row[count_key] += 1
         tier_status = item.tier_status
         row[f"{tier_status}_rate_calls" if tier_status == "base" else f"tier_{tier_status}_calls"] += 1
         if resolution.pricing is not None:
@@ -413,6 +445,14 @@ def _build_per_model_costs(
                 row["pricing_channels"].append(resolution.billing_channel)
             if resolution.source_revision and resolution.source_revision not in row["pricing_revisions"]:
                 row["pricing_revisions"].append(resolution.source_revision)
+            if resolution.provider_count and resolution.provider_count not in row["market_provider_counts"]:
+                row["market_provider_counts"].append(resolution.provider_count)
+            if resolution.rate_date and resolution.rate_date not in row["market_rate_dates"]:
+                row["market_rate_dates"].append(resolution.rate_date)
+            if resolution.market_status and resolution.market_status not in row["market_statuses"]:
+                row["market_statuses"].append(resolution.market_status)
+            if resolution.cost_basis and resolution.cost_basis not in row["cost_bases"]:
+                row["cost_bases"].append(resolution.cost_basis)
         else:
             row["unpriced_calls"] += 1
 
@@ -440,6 +480,16 @@ def _build_per_model_costs(
                 "reasoning_percent": round(reasoning_tokens / generated_tokens * 100.0, 2) if generated_tokens else 0.0,
                 "api_cost": round(api_cost, 6),
                 "estimated_cost": round(estimated_cost, 6),
+                "estimated_direct_cost": round(row["estimated_direct_cost"], 6),
+                "estimated_generic_cost": round(row["estimated_generic_cost"], 6),
+                "estimated_market_cost": round(row["estimated_market_cost"], 6),
+                "estimated_future_market_cost": round(row["estimated_future_market_cost"], 6),
+                "estimated_cloud_equivalent_cost": round(row["estimated_cloud_equivalent_cost"], 6),
+                "direct_estimate_calls": int(row["direct_estimate_calls"]),
+                "generic_estimate_calls": int(row["generic_estimate_calls"]),
+                "market_estimate_calls": int(row["market_estimate_calls"]),
+                "future_market_estimate_calls": int(row["future_market_estimate_calls"]),
+                "cloud_equivalent_estimate_calls": int(row["cloud_equivalent_estimate_calls"]),
                 "cost": round(primary_cost, 6),
                 "priced_calls": int(row["priced_calls"]),
                 "future_fallback_calls": int(row["future_fallback_calls"]),
@@ -448,6 +498,10 @@ def _build_per_model_costs(
                 "pricing_provenance": "; ".join(str(item) for item in row["provenances"]),
                 "pricing_channels": "; ".join(str(item) for item in row["pricing_channels"]),
                 "pricing_revisions": "; ".join(str(item) for item in row["pricing_revisions"]),
+                "market_provider_count": max(row["market_provider_counts"], default=0),
+                "market_rate_date": "; ".join(str(item) for item in row["market_rate_dates"]),
+                "market_status": "; ".join(str(item) for item in row["market_statuses"]),
+                "cost_basis": "; ".join(str(item) for item in row["cost_bases"]),
                 "tier_applied_calls": int(row["tier_applied_calls"]),
                 "base_rate_calls": int(row["base_rate_calls"]),
                 "tier_unknown_calls": int(row["tier_unknown_calls"]),

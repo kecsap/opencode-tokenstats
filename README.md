@@ -107,6 +107,11 @@ The report focuses on the stuff that matters when AI usage gets expensive or noi
 - **Period Summary** for totals and high-level usage
 - **Token Composition** to separate productive output from context overhead
 - **Model Costs** to see where spend concentrates
+
+Model Costs shows actual API charges separately from local estimates. `*` marks
+rows made entirely from generic fallback rates; `†` marks later hosted-market
+rates. Hosted-market and generic estimates are counterfactual pricing, not money
+spent. Mixed-basis rows have no `*` marker.
 - **Top Tools** to spot tool-heavy sessions
 - **Component Contribution** to understand MCP/skill/subagent families
 - **OpenCode Contribution** to measure built-in tool overhead
@@ -195,7 +200,19 @@ claude-pro = anthropic/claude-sonnet-4
 
 @local myollama/* myllamacpp/*
 @local *qwen36*
+
+# Map local model IDs to hosted catalog IDs when pricing is available.
+@market-model qwen3.8-27b* = openai/qwen3.8-27b
+@cloud-equivalent qwen3.8-27b = openai/qwen3.8-27b
 ```
+
+`@market-model` rules are authoritative for local-model pricing estimates.
+Exact sources win; otherwise the most-specific wildcard wins, then the later
+rule. Matching ignores case and separators in the final model-ID segment. If
+an explicit market target is unavailable in the pricing ledger, its
+`@cloud-equivalent` rule is tried, then the generic fallback is used; automatic
+matching is not retried. These rules do not change aliases, `@local`
+classification, actual costs, or report aggregation.
 
 Load order:
 

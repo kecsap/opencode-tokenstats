@@ -373,3 +373,53 @@ def test_report_exposes_per_model_tier_and_context_metadata() -> None:
     assert model["tier_unknown_calls"] == 1
     assert model["context_tokens"] == 200000
     assert model["context_token_source"] == "input_plus_cache; incomplete"
+
+
+def test_report_aggregates_market_metadata_across_alias_rows(tmp_path) -> None:
+    alias_file = tmp_path / "models.conf"
+    alias_file.write_text("shared = provider/active provider/future\n", encoding="utf-8")
+    metric = replace(
+        _metric(),
+        actual_cost_usd=0.0,
+        estimated_cost_usd=0.03,
+        per_model_costs=[
+            {
+                "model": "provider/active",
+                "tokens": 10,
+                "input_tokens": 10,
+                "estimated_cost": 0.01,
+                "estimated_market_cost": 0.01,
+                "market_provider_count": 2,
+                "market_rate_date": "2026-01-01",
+                "market_status": "active",
+                "cost_basis": "market",
+            },
+            {
+                "model": "provider/future",
+                "tokens": 20,
+                "input_tokens": 20,
+                "estimated_cost": 0.02,
+                "estimated_future_market_cost": 0.02,
+                "market_provider_count": 3,
+                "market_rate_date": "2026-02-01",
+                "market_status": "future",
+                "cost_basis": "market",
+            },
+        ],
+    )
+
+    report = build_report_schema(
+        period="daily",
+        mode="local",
+        start=datetime(2026, 1, 1, tzinfo=UTC),
+        end=datetime(2026, 1, 2, tzinfo=UTC),
+        session_metrics=[metric],
+        model_alias_file=str(alias_file),
+    )
+
+    model = report["models"][0]
+    assert model["model"] == "shared"
+    assert model["market_provider_count"] == 3
+    assert model["market_rate_date"] == "2026-01-01; 2026-02-01"
+    assert model["market_status"] == "active; future"
+    assert model["cost_basis"] == "market"

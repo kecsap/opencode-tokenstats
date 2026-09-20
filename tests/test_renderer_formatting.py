@@ -24,6 +24,33 @@ def test_period_report_formats_numbers_and_local_timestamps(monkeypatch, capsys)
     assert "+00:00" not in out
 
 
+def test_model_cost_markers_and_footer(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(renderer, "RICH_AVAILABLE", False)
+    renderer.print_period_report(
+        "daily",
+        {
+            "sessions": 1,
+            "api_calls": 1,
+            "tokens": 10,
+            "from": "2026-05-01T00:00:00+00:00",
+            "to": "2026-05-02T00:00:00+00:00",
+            "model_costs": [
+                {"model": "generic", "estimated_cost": 1.0, "estimated_generic_cost": 1.0},
+                {"model": "future", "estimated_cost": 2.0, "estimated_future_market_cost": 2.0},
+                {"model": "active", "estimated_cost": 4.0, "estimated_market_cost": 4.0, "market_status": "active"},
+                {"model": "mixed", "estimated_cost": 3.0, "estimated_generic_cost": 1.0},
+            ],
+        },
+    )
+    out = capsys.readouterr().out
+    assert "1.00*" in out
+    assert "2.00†" in out
+    assert "4.00" in out
+    assert "4.00†" not in out
+    assert "3.00*" not in out
+    assert "counterfactual, not spend" in out
+
+
 def test_session_report_formats_fractions(monkeypatch, capsys) -> None:
     monkeypatch.setattr(renderer, "RICH_AVAILABLE", False)
 

@@ -71,6 +71,90 @@ def test_canonical_metrics_resolves_each_call_once(monkeypatch) -> None:
     assert out.activity_rows[0]["estimated_cost"] == out.estimated_cost_usd
 
 
+def test_canonical_metrics_uses_local_market_rules_for_estimates(monkeypatch, tmp_path) -> None:
+    from opencode_tokenstats.pricing import (
+        ModelPricing,
+        PricingLookup,
+        PricingRecord,
+    )
+
+    conf = tmp_path / "models.conf"
+    conf.write_text(
+        "@local *\n"
+        "@market-model qwen3.8-27b* = catalog/missing\n"
+        "@market-model qwen3.8* = catalog/wild\n"
+        "@market-model qwen3.8-27b = catalog/exact\n"
+        "@cloud-equivalent qwen3.8-27b = catalog/cloud\n"
+    )
+    rate = ModelPricing(input=10.0, output=0.0, cache_read=0.0)
+    history = tuple(
+        PricingRecord(
+            provider="catalog",
+            model=model,
+            service_profile="standard",
+            context="short",
+            effective_from="2026-01-01T00:00:00Z",
+            effective_to=None,
+            status="active",
+            confidence="observed",
+            source_url="",
+            retrieved_at="",
+            pricing=ModelPricing(input=input_rate, output=0.0, cache_read=0.0),
+            aliases=aliases,
+        )
+        for model, input_rate, aliases in (
+            ("wild", 2.0, ("catalog/wild",)),
+            ("cloud-model", 3.0, ("catalog/cloud",)),
+            ("QWEN-3.8-27B-whatever", 4.0, ("catalog/exact",)),
+            ("qwen3.8-27b", 5.0, ()),
+        )
+    )
+    monkeypatch.setenv("OPTOKEN_MODEL_ALIAS_FILE", str(conf))
+    lookup = PricingLookup({"default": rate}, history)
+    assert lookup.resolve_local_call_pricing("local/QWEN_3.8_27B", 1773878400000).pricing.input == 4.0
+    assert lookup.resolve_local_call_pricing("local/local/QWEN_3.8_27B", 1773878400000).pricing.input == 4.0
+    monkeypatch.setattr("opencode_tokenstats.canonical_metrics.build_default_pricing_lookup", lambda: lookup)
+    monkeypatch.setattr("opencode_tokenstats.canonical_metrics._is_local_model", lambda model: True)
+
+    out = build_canonical_metrics("s-market", [{
+        "role": "assistant",
+        "info": {
+            "providerID": "local",
+            "modelID": "local/QWEN_3.8_27B",
+            "time": {"completed": 1773878400000},
+            "tokens": {"input": 1_000_000, "output": 0, "cache": {"read": 0, "write": 0}},
+            "cost": 0.0,
+        },
+        "parts": [{"type": "text", "text": "ok"}],
+    }])
+
+    assert out.estimated_cost_usd == pytest.approx(4.0)
+
+    monkeypatch.setenv("OPTOKEN_MODEL_ALIAS_FILE", str(tmp_path / "unavailable.conf"))
+    (tmp_path / "unavailable.conf").write_text(
+        "@local *local-model\n"
+        "@market-model local-model = catalog/missing\n"
+        "@cloud-equivalent local-model = catalog/cloud\n"
+    )
+    fallback_lookup = PricingLookup({"default": rate}, history)
+    monkeypatch.setattr(
+        "opencode_tokenstats.canonical_metrics.build_default_pricing_lookup", lambda: fallback_lookup
+    )
+    fallback = build_canonical_metrics("s-market-fallback", [{
+        "role": "assistant",
+        "info": {
+            "providerID": "local",
+            "modelID": "local-model",
+            "time": {"completed": 1773878400000},
+            "tokens": {"input": 1_000_000, "output": 0, "cache": {"read": 0, "write": 0}},
+            "cost": 0.0,
+        },
+        "parts": [{"type": "text", "text": "ok"}],
+    }])
+
+    assert fallback.estimated_cost_usd == pytest.approx(3.0)
+
+
 def test_canonical_metrics_exposes_tier_coverage(monkeypatch, tmp_path) -> None:
     import json
 
@@ -101,6 +185,86 @@ def test_canonical_metrics_exposes_tier_coverage(monkeypatch, tmp_path) -> None:
     assert row["context_tokens"] == 200000
     assert row["context_token_source"] == "input_plus_cache"
     assert out.pricing_coverage["tier_applied_calls"] == 1
+
+
+def test_canonical_metrics_aggregates_each_cost_basis(monkeypatch) -> None:
+    from opencode_tokenstats.pricing import ModelPricing, PricingResolution
+
+    resolutions = {
+        "test/direct": PricingResolution(
+            ModelPricing(1.0, 0.0, 0.0), "active", cost_basis="direct", billing_channel="direct_api"
+        ),
+        "test/generic": PricingResolution(
+            ModelPricing(2.0, 0.0, 0.0), "default_fallback", cost_basis="generic"
+        ),
+        "local/active": PricingResolution(
+            ModelPricing(3.0, 0.0, 0.0), "active", cost_basis="market", billing_channel="market",
+            provider_count=2, rate_date="2026-01-01", market_status="active",
+        ),
+        "local/future": PricingResolution(
+            ModelPricing(4.0, 0.0, 0.0), "future_fallback", cost_basis="market", billing_channel="market",
+            provider_count=3, rate_date="2027-01-01", market_status="future",
+        ),
+        "local/cloud": PricingResolution(
+            ModelPricing(5.0, 0.0, 0.0), "active", cost_basis="cloud_equivalent",
+            billing_channel="cloud_equivalent", provider_count=1, rate_date="2026-01-01",
+            market_status="active",
+        ),
+    }
+
+    class Lookup:
+        def resolve_call_pricing(self, model_name, _timestamp_ms=None):
+            return resolutions[model_name]
+
+        def resolve_local_call_pricing(self, model_name, _timestamp_ms=None):
+            return resolutions[model_name]
+
+    monkeypatch.setattr("opencode_tokenstats.canonical_metrics.build_default_pricing_lookup", Lookup)
+    monkeypatch.setattr(
+        "opencode_tokenstats.canonical_metrics._is_local_model",
+        lambda model: model.startswith("local/"),
+    )
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "providerID": provider,
+                "modelID": model,
+                "tokens": {"input": 1_000_000, "output": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.0,
+            },
+            "parts": [{"type": "text", "text": "ok"}],
+        }
+        for provider, model in (
+            ("test", "direct"),
+            ("test", "generic"),
+            ("local", "active"),
+            ("local", "future"),
+            ("local", "cloud"),
+        )
+    ]
+
+    rows = {row["model"]: row for row in build_canonical_metrics("s-bases", messages).per_model_costs}
+
+    assert [rows[model][field] for model, field in (
+        ("test/direct", "estimated_direct_cost"),
+        ("test/generic", "estimated_generic_cost"),
+        ("local/active", "estimated_market_cost"),
+        ("local/future", "estimated_future_market_cost"),
+        ("local/cloud", "estimated_cloud_equivalent_cost"),
+    )] == [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert [rows[model][field] for model, field in (
+        ("test/direct", "direct_estimate_calls"),
+        ("test/generic", "generic_estimate_calls"),
+        ("local/active", "market_estimate_calls"),
+        ("local/future", "future_market_estimate_calls"),
+        ("local/cloud", "cloud_equivalent_estimate_calls"),
+    )] == [1, 1, 1, 1, 1]
+    assert rows["local/active"]["market_provider_count"] == 2
+    assert rows["local/active"]["market_status"] == "active"
+    assert rows["local/future"]["market_rate_date"] == "2027-01-01"
+    assert rows["local/future"]["market_status"] == "future"
+    assert rows["local/cloud"]["cost_basis"] == "cloud_equivalent"
 
 
 def test_canonical_metrics_marks_incomplete_context_as_tier_unknown(monkeypatch, tmp_path) -> None:

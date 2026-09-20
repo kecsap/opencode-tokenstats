@@ -426,6 +426,21 @@ def _format_pricing_coverage(coverage: dict[str, Any] | None) -> str | None:
     return f"{percent:.2f}% ({priced} priced, {unpriced} unpriced, {future_fallback} future-fallback)"
 
 
+def _model_estimate_label(item: dict[str, Any]) -> str:
+    value = _fmt_float(item.get("estimated_cost"))
+    if float(item.get("estimated_future_market_cost", 0) or 0) > 0:
+        return value + "†"
+    if float(item.get("estimated_generic_cost", 0) or 0) > 0 and float(item.get("estimated_cost", 0) or 0) == float(item.get("estimated_generic_cost", 0) or 0):
+        return value + "*"
+    return value
+
+
+def _model_costs_footer(model_costs: list[dict[str, Any]]) -> Text:
+    if not any(float(row.get("estimated_cost", 0) or 0) > 0 for row in model_costs):
+        return Text("")
+    return Text("* generic fallback estimate   † later hosted-market estimate; local market prices are counterfactual, not spend", style=COL_DIM)
+
+
 def print_session_report(
     session_id: str,
     api_calls: int,
@@ -456,7 +471,11 @@ def print_session_report(
         if top_tools:
             print(f"External Tools: {top_tools}")
         if model_costs:
-            print(f"Model Costs: {model_costs}")
+            displayed = [dict(item, estimated_cost=_model_estimate_label(item)) for item in model_costs]
+            print(f"Model Costs: {displayed}")
+            footer = _model_costs_footer(model_costs)
+            if footer.plain:
+                print(footer.plain)
         if mcp_stats:
             print(f"MCP Stats: {mcp_stats}")
         if core_stats:
@@ -513,8 +532,9 @@ def print_session_report(
                 f"{float(item.get('output_percent', 0)):.2f}",
                 f"{float(item.get('reasoning_percent', 0)):.2f}",
                 _fmt_float(api_cost),
-                _fmt_float(item.get("estimated_cost")),
+                _model_estimate_label(item),
             )
+        mt.add_row("", "", "", "", "", "", "", _model_costs_footer(shown_models))
         console.print(Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN))
 
     if mcp_stats and mcp_stats.get("rows"):
@@ -609,7 +629,11 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         if report.get("top_tools"):
             print(f"External Tools: {report['top_tools']}")
         if report.get("model_costs"):
-            print(f"Model Costs: {report['model_costs']}")
+            displayed = [dict(item, estimated_cost=_model_estimate_label(item)) for item in report["model_costs"]]
+            print(f"Model Costs: {displayed}")
+            footer = _model_costs_footer(report["model_costs"])
+            if footer.plain:
+                print(footer.plain)
         if report.get("mcp_stats"):
             print(f"MCP Stats: {report['mcp_stats']}")
         if report.get("component_stats"):
@@ -685,8 +709,9 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 f"{float(item.get('output_percent', 0)):.2f}",
                 f"{float(item.get('reasoning_percent', 0)):.2f}",
                 _fmt_float(api_cost),
-                _fmt_float(item.get("estimated_cost")),
+                _model_estimate_label(item),
             )
+        mt.add_row("", "", "", "", "", "", "", _model_costs_footer(shown_models))
         model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN, expand=False)
     else:
         model_costs_panel = None

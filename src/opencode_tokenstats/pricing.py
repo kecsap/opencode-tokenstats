@@ -52,6 +52,8 @@ def load_model_aliases(file_path: str | None = None) -> dict[str, str]:
                     if "=" in line:
                         key, val = line.split("=", 1)
                         key = key.strip()
+                        if key.startswith(("@market-model ", "@cloud-equivalent ")):
+                            continue
                         # Strip @local prefix from alias name
                         alias_name = key
                         if alias_name.startswith("@local "):
@@ -135,6 +137,187 @@ def load_local_model_patterns(file_path: str | None = None) -> list[str]:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelEquivalenceRule:
+    """User rule mapping a local model source to hosted model candidates."""
+
+    directive: str
+    source: str
+    targets: tuple[str, ...]
+    order: int
+
+
+def _model_config_path(file_path: str | None) -> Path | None:
+    candidates = [Path(file_path)] if file_path else []
+    env_file = os.environ.get("OPTOKEN_MODEL_ALIAS_FILE", "")
+    if env_file:
+        candidates.append(Path(env_file))
+    if not candidates:
+        candidates.append(Path.cwd() / "models.conf")
+    return next((path for path in candidates if path.exists()), None)
+
+
+def load_model_equivalence_rules(file_path: str | None = None) -> tuple[ModelEquivalenceRule, ...]:
+    """Load ``@market-model`` and ``@cloud-equivalent`` rules from models.conf."""
+    path = _model_config_path(file_path)
+    if path is None:
+        return ()
+    rules: list[ModelEquivalenceRule] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return ()
+    for order, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        directive = next((name for name in ("@market-model", "@cloud-equivalent") if line.startswith(name + " ")), None)
+        if directive is None:
+            continue
+        body = line[len(directive):].strip()
+        if "=" in body:
+            source, target_text = body.split("=", 1)
+        else:
+            parts = body.split(None, 1)
+            if len(parts) != 2:
+                continue
+            source, target_text = parts
+        source = source.strip()
+        targets = tuple(target for target in target_text.split() if target)
+        if source and targets:
+            rules.append(ModelEquivalenceRule(directive, source, targets, order))
+    return tuple(rules)
+
+
+def _normalized_model_segment(model_id: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", model_id.rsplit("/", 1)[-1].lower())
+
+
+def _matching_equivalence_rule(model_id: str, rules: tuple[ModelEquivalenceRule, ...], directive: str) -> ModelEquivalenceRule | None:
+    source = _normalized_model_segment(model_id)
+    matches: list[tuple[int, int, ModelEquivalenceRule]] = []
+    for rule in rules:
+        if rule.directive != directive:
+            continue
+        pattern = _normalized_model_segment(rule.source.replace("*", ""))
+        if "*" in rule.source and source.startswith(pattern):
+            matches.append((0, len(pattern), rule))
+        elif "*" not in rule.source and source == pattern:
+            matches.append((1, len(pattern), rule))
+    if not matches:
+        return None
+    return max(matches, key=lambda item: (item[0], item[1], item[2].order))[2]
+
+
+def _market_candidates(
+    model_id: str,
+    records: tuple[PricingRecord, ...],
+    rules: tuple[ModelEquivalenceRule, ...],
+    targets: tuple[str, ...] | None = None,
+) -> tuple[tuple[PricingRecord, ...], bool]:
+    rule = _matching_equivalence_rule(model_id, rules, "@market-model")
+    automatic = targets is None and rule is None
+    wanted = targets if targets is not None else (rule.targets if rule is not None else (model_id,))
+    normalized_targets = {_normalized_model_segment(target) for target in wanted}
+    found = tuple(
+        record
+        for record in records
+        if any(
+            (source.startswith(normalized) if automatic else normalized == target or normalized.startswith(target) or target.startswith(normalized))
+            for candidate in (record.model, *record.aliases)
+            for normalized in (_normalized_model_segment(candidate),)
+            for target in normalized_targets
+            for source in (_normalized_model_segment(model_id),)
+        )
+    )
+    return found, rule is not None
+
+
+def _base_rates(pricing: ModelPricing) -> tuple[float, ...]:
+    return (pricing.input, pricing.output, pricing.cache_read, pricing.cache_write, pricing.reasoning or 0.0)
+
+
+def _record_active_at(
+    record: PricingRecord,
+    intervals: dict[int, tuple[datetime, datetime | None]],
+    moment: datetime,
+) -> bool:
+    start, end = intervals[id(record)]
+    return start <= moment and (end is None or moment < end)
+
+
+def _one_provider_per_vote(
+    records: list[PricingRecord], intervals: dict[int, tuple[datetime, datetime | None]]
+) -> list[PricingRecord]:
+    chosen: dict[str, PricingRecord] = {}
+    for record in records:
+        provider = record.provider.lower()
+        old = chosen.get(provider)
+        if old is None or (_source_priority(record), intervals[id(record)][0]) > (
+            _source_priority(old), intervals[id(old)][0]
+        ):
+            chosen[provider] = record
+    return list(chosen.values())
+
+
+def _average_market_pricing(prices: tuple[ModelPricing, ...]) -> ModelPricing:
+    count = len(prices)
+    reasoning_values = [pricing.reasoning for pricing in prices if pricing.reasoning is not None]
+    return ModelPricing(
+        input=sum(pricing.input for pricing in prices) / count,
+        output=sum(pricing.output for pricing in prices) / count,
+        cache_read=sum(pricing.cache_read for pricing in prices) / count,
+        cache_write=sum(pricing.cache_write for pricing in prices) / count,
+        reasoning=sum(reasoning_values) / len(reasoning_values) if reasoning_values else None,
+        web_search=sum(pricing.web_search for pricing in prices) / count,
+        fast_multiplier=sum(pricing.fast_multiplier for pricing in prices) / count,
+    )
+
+
+def resolve_market_model(
+    model_id: str,
+    records: tuple[PricingRecord, ...] | list[PricingRecord],
+    rules: tuple[ModelEquivalenceRule, ...] = (),
+) -> PricingRecord | None:
+    """Resolve local model to a hosted record using explicit rules, then matching."""
+    records = tuple(records)
+
+    def find(targets: tuple[str, ...]) -> PricingRecord | None:
+        wanted = {_normalized_model_segment(target) for target in targets}
+        for record in records:
+            candidates = (record.model, *record.aliases)
+            if any(
+                any(
+                    normalized == target
+                    or normalized.startswith(target)
+                    or target.startswith(normalized)
+                    for target in wanted
+                )
+                for normalized in (_normalized_model_segment(candidate) for candidate in candidates)
+            ):
+                return record
+        return None
+
+    market = _matching_equivalence_rule(model_id, rules, "@market-model")
+    if market is not None:
+        found = find(market.targets)
+        if found is not None:
+            return found
+        cloud = _matching_equivalence_rule(model_id, rules, "@cloud-equivalent")
+        return find(cloud.targets) if cloud is not None else None
+
+    cloud = _matching_equivalence_rule(model_id, rules, "@cloud-equivalent")
+    if cloud is not None:
+        found = find(cloud.targets)
+        if found is not None:
+            return found
+    source = _normalized_model_segment(model_id)
+    for record in records:
+        if any(source.startswith(_normalized_model_segment(candidate)) for candidate in (record.model, *record.aliases)):
+            return record
+    return None
+
+
+@dataclass(frozen=True, slots=True)
 class ModelPricing:
     input: float
     output: float
@@ -191,6 +374,10 @@ class PricingResolution:
     billing_channel: str = ""
     source_revision: str = ""
     observed_at: str = ""
+    provider_count: int = 0
+    rate_date: str | None = None
+    cost_basis: str = ""
+    market_status: str = ""
 
 
 class PricingLookup:
@@ -199,9 +386,13 @@ class PricingLookup:
         pricing_data: dict[str, ModelPricing],
         history: tuple[PricingRecord, ...] = (),
         flat_keys: "frozenset[str] | None" = None,
+        equivalence_rules: tuple[ModelEquivalenceRule, ...] | None = None,
     ) -> None:
         self.pricing_data = pricing_data
         self.history = history
+        self.equivalence_rules = (
+            load_model_equivalence_rules() if equivalence_rules is None else equivalence_rules
+        )
         if flat_keys is None:
             flat_keys = frozenset(pricing_data.keys())
         self.flat_keys = frozenset(key.lower() for key in flat_keys)
@@ -227,6 +418,93 @@ class PricingLookup:
         self._history_index = {key: tuple(records) for key, records in history_index.items()}
         self._history_intervals = history_intervals
         self._history_order = history_order
+
+    def resolve_local_call_pricing(self, model_name: str, timestamp_ms: int | None = None) -> PricingResolution:
+        direct = self.resolve_call_pricing(model_name, timestamp_ms)
+        candidates, market_rule = _market_candidates(model_name, self.history, self.equivalence_rules)
+        direct_record, direct_status = self._match_history_record(
+            (model_name or "").strip().lower(), timestamp_ms, exact_only=True
+        )
+        if direct_record is not None and direct_status in {"active", "future_fallback"}:
+            return PricingResolution(
+                pricing=direct_record.pricing,
+                status=direct_status,
+                provenance=direct_record.source_url,
+                effective_from=direct_record.effective_from,
+                effective_to=direct_record.effective_to,
+                billing_channel=direct_record.billing_channel,
+                source_revision=direct_record.source_revision,
+                observed_at=direct_record.observed_at,
+            )
+        if not candidates and direct.status in {"active", "future_fallback"}:
+            return direct
+        if market_rule:
+            resolution = self._resolve_market_candidates(candidates, timestamp_ms)
+            if resolution is not None:
+                return resolution
+            cloud = _matching_equivalence_rule(model_name, self.equivalence_rules, "@cloud-equivalent")
+            if cloud is not None:
+                candidates, _ = _market_candidates(model_name, self.history, self.equivalence_rules, cloud.targets)
+                resolution = self._resolve_market_candidates(candidates, timestamp_ms)
+                if resolution is not None:
+                    return resolution
+        elif candidates:
+            resolution = self._resolve_market_candidates(candidates, timestamp_ms)
+            if resolution is not None:
+                return resolution
+        return PricingResolution(
+            pricing=self.pricing_data.get("default", _default_pricing()),
+            status="default_fallback",
+            provenance="default",
+        )
+
+    def _resolve_market_candidates(
+        self, candidates: tuple[PricingRecord, ...], timestamp_ms: int | None
+    ) -> PricingResolution | None:
+        if timestamp_ms is None:
+            return None
+        try:
+            moment = datetime.fromtimestamp(int(timestamp_ms) / 1000.0, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+        paid = [record for record in candidates if any(rate > 0 for rate in _base_rates(record.pricing))]
+        selected: list[PricingRecord] = []
+        status = "active"
+        active = [record for record in paid if _record_active_at(record, self._history_intervals, moment)]
+        if active:
+            selected = _one_provider_per_vote(active, self._history_intervals)
+        else:
+            starts = [
+                self._history_intervals[id(record)][0]
+                for record in paid
+                if self._history_intervals[id(record)][0] > moment and record.source_kind.lower() != "models.dev"
+            ]
+            if starts:
+                rate_date = min(starts)
+                selected = _one_provider_per_vote(
+                    [
+                        record
+                        for record in paid
+                        if self._history_intervals[id(record)][0] == rate_date
+                        and record.source_kind.lower() != "models.dev"
+                    ],
+                    self._history_intervals,
+                )
+                status = "future_fallback"
+        if not selected:
+            return None
+        pricing = _average_market_pricing(tuple(record.pricing for record in selected))
+        return PricingResolution(
+            pricing=pricing,
+            status=status,
+            provenance="market:" + ";".join(sorted(record.source_url for record in selected if record.source_url)),
+            effective_from=min(record.effective_from for record in selected),
+            billing_channel="market",
+            provider_count=len(selected),
+            rate_date=min(record.effective_from for record in selected),
+            cost_basis="market",
+            market_status="future" if status == "future_fallback" else "active",
+        )
 
     @staticmethod
     def build_lookup_key(provider_id: str | None, model_id: str | None) -> str:
@@ -325,9 +603,14 @@ class PricingLookup:
     def _unpriced_resolution() -> PricingResolution:
         return PricingResolution(pricing=None, status="unpriced", provenance="")
 
-    def _match_history_record(self, raw_name: str, timestamp_ms: int | None) -> tuple[PricingRecord | None, str]:
+    def _match_history_record(
+        self,
+        raw_name: str,
+        timestamp_ms: int | None,
+        exact_only: bool = False,
+    ) -> tuple[PricingRecord | None, str]:
         matched_by_id: dict[int, PricingRecord] = {}
-        for key in canonical_model_keys(raw_name):
+        for key in [raw_name] if exact_only else canonical_model_keys(raw_name):
             for record in self._history_index.get(key, ()):
                 matched_by_id[id(record)] = record
         matched = sorted(matched_by_id.values(), key=lambda record: self._history_order[id(record)])
@@ -470,7 +753,7 @@ def canonical_model_keys(model: str) -> list[str]:
     return out
 
 
-_PRICING_LOOKUP_CACHE: tuple[str | None, PricingLookup] | None = None
+_PRICING_LOOKUP_CACHE: tuple[tuple[str | None, str | None], PricingLookup] | None = None
 
 
 def reset_pricing_lookup_cache() -> None:
@@ -480,12 +763,15 @@ def reset_pricing_lookup_cache() -> None:
 
 def load_pricing_lookup() -> PricingLookup:
     global _PRICING_LOOKUP_CACHE
-    cache_key = os.environ.get("OPENCODE_MODEL_PRICING_FILE")
+    cache_key = (
+        os.environ.get("OPENCODE_MODEL_PRICING_FILE"),
+        os.environ.get("OPTOKEN_MODEL_ALIAS_FILE"),
+    )
     if _PRICING_LOOKUP_CACHE is not None and _PRICING_LOOKUP_CACHE[0] == cache_key:
         return _PRICING_LOOKUP_CACHE[1]
 
     candidates: list[Path] = []
-    env = cache_key
+    env = cache_key[0]
     if env:
         candidates.append(Path(os.path.expanduser(os.path.expandvars(env))))
 

@@ -960,6 +960,14 @@ def _build_period_report(
             "output_tokens": 0.0, "reasoning_tokens": 0.0, "generated_tokens": 0.0,
             "priced_calls": 0, "future_fallback_calls": 0, "default_fallback_calls": 0,
             "unpriced_calls": 0, "provenances": [],
+            "estimated_direct_cost": 0.0, "estimated_generic_cost": 0.0,
+            "estimated_market_cost": 0.0, "estimated_future_market_cost": 0.0,
+            "estimated_cloud_equivalent_cost": 0.0,
+            "direct_estimate_calls": 0, "generic_estimate_calls": 0,
+            "market_estimate_calls": 0, "future_market_estimate_calls": 0,
+            "cloud_equivalent_estimate_calls": 0,
+            "market_provider_count": 0, "market_rate_dates": [],
+            "market_statuses": [], "cost_bases": [],
         }
     )
     pricing_coverage = {
@@ -1001,6 +1009,24 @@ def _build_period_report(
             model_key = resolve_alias(str(model_row["model"]), aliases)
             model_map[model_key]["api_cost"] += float(model_row["api_cost"])
             model_map[model_key]["estimated_cost"] += float(model_row["estimated_cost"])
+            for field in ("estimated_direct_cost", "estimated_generic_cost", "estimated_market_cost", "estimated_future_market_cost", "estimated_cloud_equivalent_cost"):
+                model_map[model_key][field] += float(model_row.get(field, 0.0))
+            for field in ("direct_estimate_calls", "generic_estimate_calls", "market_estimate_calls", "future_market_estimate_calls", "cloud_equivalent_estimate_calls"):
+                model_map[model_key][field] += int(model_row.get(field, 0))
+            model_map[model_key]["market_provider_count"] = max(
+                model_map[model_key]["market_provider_count"],
+                int(model_row.get("market_provider_count", 0) or 0),
+            )
+            metadata_lists = {
+                "market_rate_date": "market_rate_dates",
+                "market_status": "market_statuses",
+                "cost_basis": "cost_bases",
+            }
+            for field, list_key in metadata_lists.items():
+                for value in str(model_row.get(field, "")).split(";"):
+                    value = value.strip()
+                    if value and value not in model_map[model_key][list_key]:
+                        model_map[model_key][list_key].append(value)
             model_map[model_key]["tokens"] += int(model_row["tokens"])
             model_map[model_key]["input_tokens"] += int(model_row.get("input_tokens", 0))
             model_map[model_key]["output_tokens"] += int(model_row.get("output_tokens", 0))
@@ -1970,12 +1996,38 @@ def _accumulate_model_cost_rows(
             "output_tokens": 0.0, "reasoning_tokens": 0.0, "generated_tokens": 0.0,
             "priced_calls": 0, "future_fallback_calls": 0, "default_fallback_calls": 0,
             "unpriced_calls": 0, "provenances": [],
+            "estimated_direct_cost": 0.0, "estimated_generic_cost": 0.0,
+            "estimated_market_cost": 0.0, "estimated_future_market_cost": 0.0,
+            "estimated_cloud_equivalent_cost": 0.0,
+            "direct_estimate_calls": 0, "generic_estimate_calls": 0,
+            "market_estimate_calls": 0, "future_market_estimate_calls": 0,
+            "cloud_equivalent_estimate_calls": 0,
+            "market_provider_count": 0, "market_rate_dates": [],
+            "market_statuses": [], "cost_bases": [],
         }
     )
     for row in model_rows:
         model_id = resolve_alias(str(row.get("model", "unknown")), aliases)
         model_map[model_id]["api_cost"] += float(row.get("api_cost", 0.0))
         model_map[model_id]["estimated_cost"] += float(row.get("estimated_cost", 0.0))
+        for field in ("estimated_direct_cost", "estimated_generic_cost", "estimated_market_cost", "estimated_future_market_cost", "estimated_cloud_equivalent_cost"):
+            model_map[model_id][field] += float(row.get(field, 0.0))
+        for field in ("direct_estimate_calls", "generic_estimate_calls", "market_estimate_calls", "future_market_estimate_calls", "cloud_equivalent_estimate_calls"):
+            model_map[model_id][field] += int(row.get(field, 0))
+        model_map[model_id]["market_provider_count"] = max(
+            model_map[model_id]["market_provider_count"],
+            int(row.get("market_provider_count", 0) or 0),
+        )
+        metadata_lists = {
+            "market_rate_date": "market_rate_dates",
+            "market_status": "market_statuses",
+            "cost_basis": "cost_bases",
+        }
+        for field, list_key in metadata_lists.items():
+            for value in str(row.get(field, "")).split(";"):
+                value = value.strip()
+                if value and value not in model_map[model_id][list_key]:
+                    model_map[model_id][list_key].append(value)
         model_map[model_id]["tokens"] += float(row.get("tokens", 0.0))
         model_map[model_id]["input_tokens"] += float(row.get("input_tokens", 0.0))
         model_map[model_id]["output_tokens"] += float(row.get("output_tokens", 0.0))
@@ -2030,12 +2082,18 @@ def _finalize_model_costs(model_map: dict[str, dict[str, Any]]) -> list[dict[str
                 "reasoning_percent": round(reasoning_tokens / generated_tokens * 100.0, 2) if generated_tokens else 0.0,
                 "api_cost": round(api_cost, 6),
                 "estimated_cost": round(estimated_cost, 6),
+                **{field: round(float(costs.get(field, 0.0)), 6) for field in ("estimated_direct_cost", "estimated_generic_cost", "estimated_market_cost", "estimated_future_market_cost", "estimated_cloud_equivalent_cost")},
+                **{field: int(costs.get(field, 0)) for field in ("direct_estimate_calls", "generic_estimate_calls", "market_estimate_calls", "future_market_estimate_calls", "cloud_equivalent_estimate_calls")},
                 "cost": round(primary_cost, 6),
                 "priced_calls": priced_calls,
                 "future_fallback_calls": future_fallback_calls,
                 "default_fallback_calls": default_fallback_calls,
                 "unpriced_calls": unpriced_calls,
                 "pricing_provenance": "; ".join(str(item) for item in costs.get("provenances", [])),
+                "market_provider_count": int(costs.get("market_provider_count", 0)),
+                "market_rate_date": "; ".join(str(item) for item in costs.get("market_rate_dates", [])),
+                "market_status": "; ".join(str(item) for item in costs.get("market_statuses", [])),
+                "cost_basis": "; ".join(str(item) for item in costs.get("cost_bases", [])),
                 "pricing_status": pricing_status,
             }
         )

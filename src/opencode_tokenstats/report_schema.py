@@ -85,6 +85,14 @@ def build_report_schema(
             "provenances": [],
             "pricing_channels": [],
             "pricing_revisions": [],
+            "estimated_direct_cost": 0.0, "estimated_generic_cost": 0.0,
+            "estimated_market_cost": 0.0, "estimated_future_market_cost": 0.0,
+            "estimated_cloud_equivalent_cost": 0.0,
+            "market_provider_count": 0, "market_rate_dates": [],
+            "market_statuses": [], "cost_bases": [],
+            "direct_estimate_calls": 0, "generic_estimate_calls": 0,
+            "market_estimate_calls": 0, "future_market_estimate_calls": 0,
+            "cloud_equivalent_estimate_calls": 0,
         }
 
     aliases = load_model_aliases(model_alias_file)
@@ -102,6 +110,24 @@ def build_report_schema(
                 models[model_key]["estimated_cost"] = round(
                     models[model_key]["estimated_cost"] + float(row.get("estimated_cost", 0.0)), 6
                 )
+                for field in ("estimated_direct_cost", "estimated_generic_cost", "estimated_market_cost", "estimated_future_market_cost", "estimated_cloud_equivalent_cost"):
+                    models[model_key][field] += float(row.get(field, 0.0))
+                for field in ("direct_estimate_calls", "generic_estimate_calls", "market_estimate_calls", "future_market_estimate_calls", "cloud_equivalent_estimate_calls"):
+                    models[model_key][field] += int(row.get(field, 0))
+                models[model_key]["market_provider_count"] = max(
+                    models[model_key]["market_provider_count"],
+                    int(row.get("market_provider_count", 0) or 0),
+                )
+                metadata_lists = {
+                    "market_rate_date": "market_rate_dates",
+                    "market_status": "market_statuses",
+                    "cost_basis": "cost_bases",
+                }
+                for field, list_key in metadata_lists.items():
+                    for value in str(row.get(field, "")).split(";"):
+                        value = value.strip()
+                        if value and value not in models[model_key][list_key]:
+                            models[model_key][list_key].append(value)
                 models[model_key]["tokens"] += int(row.get("tokens", 0))
                 models[model_key]["input_tokens"] += int(row.get("input_tokens", 0))
                 models[model_key]["output_tokens"] += int(row.get("output_tokens", 0))
@@ -217,6 +243,12 @@ def build_report_schema(
                 "pricing_channels": "; ".join(str(item) for item in costs["pricing_channels"]),
                 "pricing_revisions": "; ".join(str(item) for item in costs["pricing_revisions"]),
                 "pricing_status": pricing_status,
+                "market_provider_count": int(costs["market_provider_count"]),
+                "market_rate_date": "; ".join(str(item) for item in costs["market_rate_dates"]),
+                "market_status": "; ".join(str(item) for item in costs["market_statuses"]),
+                "cost_basis": "; ".join(str(item) for item in costs["cost_bases"]),
+                **{field: round(float(costs[field]), 6) for field in ("estimated_direct_cost", "estimated_generic_cost", "estimated_market_cost", "estimated_future_market_cost", "estimated_cloud_equivalent_cost")},
+                **{field: int(costs[field]) for field in ("direct_estimate_calls", "generic_estimate_calls", "market_estimate_calls", "future_market_estimate_calls", "cloud_equivalent_estimate_calls")},
             }
         )
     model_rows.sort(key=lambda x: x["cost"], reverse=True)

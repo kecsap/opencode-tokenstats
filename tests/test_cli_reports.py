@@ -11,6 +11,7 @@ import pytest
 
 from opencode_tokenstats import cli
 from opencode_tokenstats import pricing
+from opencode_tokenstats.canonical_metrics import CanonicalMetrics
 
 
 @pytest.fixture(autouse=True)
@@ -110,6 +111,46 @@ def test_json_command_exposes_pricing_coverage(monkeypatch) -> None:
     assert payload["pricing"]["coverage_percent"] == 100.0
 
 
+def test_json_command_preserves_cost_basis_amounts_and_metadata(monkeypatch) -> None:
+    rows = [
+        {"model": "shared", "tokens": 1, "estimated_cost": 1.0, "estimated_direct_cost": 1.0, "direct_estimate_calls": 1, "cost_basis": "direct"},
+        {"model": "shared", "tokens": 1, "estimated_cost": 2.0, "estimated_generic_cost": 2.0, "generic_estimate_calls": 1, "cost_basis": "generic"},
+        {"model": "shared", "tokens": 1, "estimated_cost": 3.0, "estimated_market_cost": 3.0, "market_estimate_calls": 1, "market_provider_count": 2, "market_rate_date": "2026-01-01", "market_status": "active", "cost_basis": "market"},
+        {"model": "shared", "tokens": 1, "estimated_cost": 4.0, "estimated_future_market_cost": 4.0, "future_market_estimate_calls": 1, "market_provider_count": 3, "market_rate_date": "2027-01-01", "market_status": "future", "cost_basis": "market"},
+        {"model": "shared", "tokens": 1, "estimated_cost": 5.0, "estimated_cloud_equivalent_cost": 5.0, "cloud_equivalent_estimate_calls": 1, "cost_basis": "cloud_equivalent"},
+    ]
+    metric = CanonicalMetrics(
+        session_id="s-bases", model="shared", input_tokens=5, output_tokens=0, reasoning_tokens=0,
+        cache_read_tokens=0, session_total_tokens=5, api_calls=5, actual_cost_usd=0.0,
+        estimated_cost_usd=15.0, token_composition={}, component_rows=[], component_family_rows=[],
+        core_rows=[], tool_rows=[], mcp_rows=[], per_model_costs=rows,
+        pricing_coverage={"calls": 5, "priced_calls": 5},
+    )
+    monkeypatch.setattr(cli, "_collect_period_session_metrics", lambda *args, **kwargs: [metric])
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+
+    result = CliRunner().invoke(cli.main, ["json", "--period", "daily"])
+    assert result.exit_code == 0
+    model = json.loads(result.output)["models"][0]
+    for field, value in {
+        "estimated_direct_cost": 1.0,
+        "estimated_generic_cost": 2.0,
+        "estimated_market_cost": 3.0,
+        "estimated_future_market_cost": 4.0,
+        "estimated_cloud_equivalent_cost": 5.0,
+        "direct_estimate_calls": 1,
+        "generic_estimate_calls": 1,
+        "market_estimate_calls": 1,
+        "future_market_estimate_calls": 1,
+        "cloud_equivalent_estimate_calls": 1,
+    }.items():
+        assert model[field] == value
+    assert model["market_provider_count"] == 3
+    assert model["market_rate_date"] == "2026-01-01; 2027-01-01"
+    assert model["market_status"] == "active; future"
+    assert model["cost_basis"] == "direct; generic; market; cloud_equivalent"
+
+
 def test_session_command_shows_pricing_coverage_and_warnings(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
     monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
@@ -128,6 +169,41 @@ def test_period_report_shows_pricing_coverage_and_warnings(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Pricing" in result.output
     assert "unpriced" in result.output
+
+
+def test_model_cost_alias_aggregation_preserves_market_metadata() -> None:
+    rows = cli._accumulate_model_cost_rows(
+        [
+            {
+                "model": "provider/active",
+                "tokens": 10,
+                "estimated_cost": 0.01,
+                "estimated_market_cost": 0.01,
+                "market_provider_count": 2,
+                "market_rate_date": "2026-01-01",
+                "market_status": "active",
+                "cost_basis": "market",
+            },
+            {
+                "model": "provider/future",
+                "tokens": 20,
+                "estimated_cost": 0.02,
+                "estimated_future_market_cost": 0.02,
+                "market_provider_count": 3,
+                "market_rate_date": "2026-02-01",
+                "market_status": "future",
+                "cost_basis": "market",
+            },
+        ],
+        {"provider/active": "shared", "provider/future": "shared"},
+    )
+
+    model = cli._finalize_model_costs(rows)[0]
+    assert model["model"] == "shared"
+    assert model["market_provider_count"] == 3
+    assert model["market_rate_date"] == "2026-01-01; 2026-02-01"
+    assert model["market_status"] == "active; future"
+    assert model["cost_basis"] == "market"
 
 
 def test_local_collection_reports_discovery_and_processing_stages(monkeypatch) -> None:
