@@ -436,7 +436,7 @@ def test_local_model_cost_is_zero(tmp_path) -> None:
         assert out.model == "myollama/qwen3.6:35b-yarn"
         assert out.actual_cost_usd == 0.0  # API cost should be 0 for local models
         assert out.estimated_cost_usd == 0.0
-        assert out.pricing_coverage["default_fallback_calls"] == 1
+        assert out.pricing_coverage["future_fallback_calls"] == 1
     finally:
         if old_env is None:
             os.environ.pop("OPTOKEN_MODEL_ALIAS_FILE", None)

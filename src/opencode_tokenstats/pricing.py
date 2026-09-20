@@ -418,10 +418,25 @@ class PricingLookup:
         self._history_index = {key: tuple(records) for key, records in history_index.items()}
         self._history_intervals = history_intervals
         self._history_order = history_order
+        self._market_candidate_cache: dict[
+            tuple[str, tuple[str, ...] | None], tuple[tuple[PricingRecord, ...], bool]
+        ] = {}
+
+    def _cached_market_candidates(
+        self, model_id: str, targets: tuple[str, ...] | None = None
+    ) -> tuple[tuple[PricingRecord, ...], bool]:
+        key = (
+            _normalized_model_segment(model_id),
+            None if targets is None else tuple(_normalized_model_segment(target) for target in targets),
+        )
+        candidates = self._market_candidate_cache.get(key)
+        if candidates is None:
+            candidates = _market_candidates(model_id, self.history, self.equivalence_rules, targets)
+            self._market_candidate_cache[key] = candidates
+        return candidates
 
     def resolve_local_call_pricing(self, model_name: str, timestamp_ms: int | None = None) -> PricingResolution:
         direct = self.resolve_call_pricing(model_name, timestamp_ms)
-        candidates, market_rule = _market_candidates(model_name, self.history, self.equivalence_rules)
         direct_record, direct_status = self._match_history_record(
             (model_name or "").strip().lower(), timestamp_ms, exact_only=True
         )
@@ -436,19 +451,22 @@ class PricingLookup:
                 source_revision=direct_record.source_revision,
                 observed_at=direct_record.observed_at,
             )
+        market_rule = _matching_equivalence_rule(model_name, self.equivalence_rules, "@market-model")
+        if market_rule is None and model_name.lower().startswith(("openai/", "anthropic/", "google/", "azure/")):
+            return direct if direct.status in {"active", "future_fallback"} else PricingResolution(
+                pricing=self.pricing_data.get("default", _default_pricing()),
+                status="default_fallback",
+                provenance="default",
+            )
+        candidates, _ = self._cached_market_candidates(model_name)
         if not candidates and direct.status in {"active", "future_fallback"}:
             return direct
-        if market_rule:
-            resolution = self._resolve_market_candidates(candidates, timestamp_ms)
-            if resolution is not None:
-                return resolution
-            cloud = _matching_equivalence_rule(model_name, self.equivalence_rules, "@cloud-equivalent")
-            if cloud is not None:
-                candidates, _ = _market_candidates(model_name, self.history, self.equivalence_rules, cloud.targets)
-                resolution = self._resolve_market_candidates(candidates, timestamp_ms)
-                if resolution is not None:
-                    return resolution
-        elif candidates:
+        resolution = self._resolve_market_candidates(candidates, timestamp_ms)
+        if resolution is not None:
+            return resolution
+        cloud = _matching_equivalence_rule(model_name, self.equivalence_rules, "@cloud-equivalent")
+        if cloud is not None:
+            candidates, _ = self._cached_market_candidates(model_name, cloud.targets)
             resolution = self._resolve_market_candidates(candidates, timestamp_ms)
             if resolution is not None:
                 return resolution
@@ -461,39 +479,72 @@ class PricingLookup:
     def _resolve_market_candidates(
         self, candidates: tuple[PricingRecord, ...], timestamp_ms: int | None
     ) -> PricingResolution | None:
-        if timestamp_ms is None:
-            return None
-        try:
-            moment = datetime.fromtimestamp(int(timestamp_ms) / 1000.0, tz=timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            return None
         paid = [record for record in candidates if any(rate > 0 for rate in _base_rates(record.pricing))]
+        if not paid:
+            return None
+
+        moment = None
+        if timestamp_ms is not None:
+            try:
+                moment = datetime.fromtimestamp(int(timestamp_ms) / 1000.0, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+
         selected: list[PricingRecord] = []
-        status = "active"
-        active = [record for record in paid if _record_active_at(record, self._history_intervals, moment)]
-        if active:
-            selected = _one_provider_per_vote(active, self._history_intervals)
-        else:
-            starts = [
-                self._history_intervals[id(record)][0]
-                for record in paid
-                if self._history_intervals[id(record)][0] > moment and record.source_kind.lower() != "models.dev"
-            ]
-            if starts:
-                rate_date = min(starts)
-                selected = _one_provider_per_vote(
-                    [
-                        record
-                        for record in paid
-                        if self._history_intervals[id(record)][0] == rate_date
-                        and record.source_kind.lower() != "models.dev"
-                    ],
-                    self._history_intervals,
+        projected = moment is None
+        for provider in {record.provider.lower() for record in paid}:
+            provider_records = [record for record in paid if record.provider.lower() == provider]
+            if moment is None:
+                choice = max(
+                    provider_records,
+                    key=lambda record: (
+                        self._history_intervals[id(record)][0],
+                        _source_priority(record),
+                    ),
                 )
-                status = "future_fallback"
+            else:
+                active = [record for record in provider_records if _record_active_at(record, self._history_intervals, moment)]
+                earlier = [
+                    record
+                    for record in provider_records
+                    if self._history_intervals[id(record)][0] <= moment
+                ]
+                later = [
+                    record
+                    for record in provider_records
+                    if self._history_intervals[id(record)][0] > moment
+                ]
+                if active:
+                    choice = max(
+                        active,
+                        key=lambda record: (
+                            _source_priority(record),
+                            self._history_intervals[id(record)][0],
+                        ),
+                    )
+                elif earlier:
+                    choice = max(
+                        earlier,
+                        key=lambda record: (
+                            self._history_intervals[id(record)][0],
+                            _source_priority(record),
+                        ),
+                    )
+                    projected = True
+                elif later:
+                    choice = min(
+                        later,
+                        key=lambda record: self._history_intervals[id(record)][0],
+                    )
+                    projected = True
+                else:
+                    continue
+            selected.append(choice)
+
         if not selected:
             return None
         pricing = _average_market_pricing(tuple(record.pricing for record in selected))
+        status = "future_fallback" if projected else "active"
         return PricingResolution(
             pricing=pricing,
             status=status,

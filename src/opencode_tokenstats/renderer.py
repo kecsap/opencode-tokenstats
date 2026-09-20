@@ -436,9 +436,25 @@ def _model_estimate_label(item: dict[str, Any]) -> str:
 
 
 def _model_costs_footer(model_costs: list[dict[str, Any]]) -> Text:
-    if not any(float(row.get("estimated_cost", 0) or 0) > 0 for row in model_costs):
+    has_generic = any(
+        float(row.get("estimated_generic_cost", 0) or 0) > 0
+        and float(row.get("estimated_cost", 0) or 0)
+        == float(row.get("estimated_generic_cost", 0) or 0)
+        and float(row.get("estimated_future_market_cost", 0) or 0) <= 0
+        for row in model_costs
+    )
+    has_projected_market = any(
+        float(row.get("estimated_future_market_cost", 0) or 0) > 0
+        for row in model_costs
+    )
+    markers = []
+    if has_generic:
+        markers.append("* generic fallback estimate")
+    if has_projected_market:
+        markers.append("† hosted-market estimation")
+    if not markers:
         return Text("")
-    return Text("* generic fallback estimate   † later hosted-market estimate; local market prices are counterfactual, not spend", style=COL_DIM)
+    return Text("   ".join(markers), style=COL_DIM)
 
 
 def print_session_report(
@@ -534,8 +550,9 @@ def print_session_report(
                 _fmt_float(api_cost),
                 _model_estimate_label(item),
             )
-        mt.add_row("", "", "", "", "", "", "", _model_costs_footer(shown_models))
-        console.print(Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN))
+        model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN)
+        footer = _model_costs_footer(shown_models)
+        console.print(Group(model_costs_panel, footer) if footer.plain else model_costs_panel)
 
     if mcp_stats and mcp_stats.get("rows"):
         mcp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
@@ -711,8 +728,10 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_float(api_cost),
                 _model_estimate_label(item),
             )
-        mt.add_row("", "", "", "", "", "", "", _model_costs_footer(shown_models))
         model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN, expand=False)
+        footer = _model_costs_footer(shown_models)
+        if footer.plain:
+            model_costs_panel = Group(model_costs_panel, footer)
     else:
         model_costs_panel = None
 

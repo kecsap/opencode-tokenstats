@@ -429,6 +429,48 @@ def test_local_market_averages_paid_providers_once_and_keeps_basis(tmp_path) -> 
     assert result.market_status == "active"
 
 
+def test_local_market_candidates_are_cached_per_model_and_rule(monkeypatch, tmp_path) -> None:
+    import opencode_tokenstats.pricing as pricing_module
+
+    conf = tmp_path / "models.conf"
+    conf.write_text("@market-model qwen = catalog/qwen\n")
+    record = PricingRecord(
+        provider="catalog",
+        model="qwen-3.8-27b",
+        service_profile="standard",
+        context="short",
+        effective_from="2026-01-01T00:00:00Z",
+        effective_to=None,
+        status="active",
+        confidence="observed",
+        source_url="catalog",
+        retrieved_at="2026-01-01T00:00:00Z",
+        pricing=ModelPricing(1, 1, 0),
+        aliases=("catalog/qwen",),
+    )
+    lookup = PricingLookup(
+        {"default": ModelPricing(1, 1, 0)},
+        (record,),
+        equivalence_rules=load_model_equivalence_rules(str(conf)),
+    )
+    original = pricing_module._market_candidates
+    calls = 0
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pricing_module, "_market_candidates", counted)
+    timestamp = _ms("2026-06-01T00:00:00Z")
+    first = lookup.resolve_local_call_pricing("local/QWEN-3.8_27B", timestamp)
+    second = lookup.resolve_local_call_pricing("local/qwen-3.8-27b", timestamp)
+
+    assert first == second
+    assert first.cost_basis == "market"
+    assert calls == 1
+
+
 @pytest.mark.parametrize(
     ("direct_start", "timestamp", "expected_status"),
     (
@@ -494,6 +536,65 @@ def test_local_market_uses_earliest_future_date(tmp_path) -> None:
     assert result.status == "future_fallback"
     assert result.market_status == "future"
     assert result.rate_date == "2027-01-01T00:00:00Z"
+
+
+def test_local_market_selects_per_provider_history_and_models_dev_future(tmp_path) -> None:
+    conf = tmp_path / "models.conf"
+    conf.write_text("@market-model qwen = catalog/qwen\n")
+    records = (
+        PricingRecord(
+            provider="alpha", model="qwen-new", service_profile="standard", context="short",
+            effective_from="2027-01-01T00:00:00Z", effective_to=None,
+            status="active", confidence="observed", source_url="alpha-new", retrieved_at="",
+            pricing=ModelPricing(4, 4, 0), aliases=("catalog/qwen",), source_kind="models.dev",
+        ),
+        PricingRecord(
+            provider="beta", model="qwen-beta", service_profile="standard", context="short",
+            effective_from="2025-06-01T00:00:00Z", effective_to=None,
+            status="active", confidence="observed", source_url="beta", retrieved_at="",
+            pricing=ModelPricing(6, 6, 0), aliases=("catalog/qwen",),
+        ),
+    )
+    lookup = PricingLookup(
+        {"default": ModelPricing(1, 3, 0)}, records,
+        equivalence_rules=load_model_equivalence_rules(str(conf)),
+    )
+
+    result = lookup.resolve_local_call_pricing("local/qwen", _ms("2026-06-01T00:00:00Z"))
+
+    assert result.pricing == ModelPricing(5, 5, 0)
+    assert result.status == "future_fallback"
+    assert result.market_status == "future"
+    assert result.provider_count == 2
+
+
+def test_local_market_timestamp_less_uses_latest_rate_per_provider(tmp_path) -> None:
+    conf = tmp_path / "models.conf"
+    conf.write_text("@market-model qwen = catalog/qwen\n")
+    records = tuple(
+        PricingRecord(
+            provider=provider, model=model, service_profile="standard", context="short",
+            effective_from=effective_from, effective_to=None, status="active", confidence="observed",
+            source_url=provider, retrieved_at="", pricing=ModelPricing(input_rate, input_rate, 0),
+            aliases=("catalog/qwen",), source_kind=source_kind,
+        )
+        for provider, model, effective_from, input_rate, source_kind in (
+            ("alpha", "qwen-old", "2025-01-01T00:00:00Z", 2, "catalog"),
+            ("alpha", "qwen-new", "2026-01-01T00:00:00Z", 4, "models.dev"),
+            ("beta", "qwen", "2025-06-01T00:00:00Z", 6, "catalog"),
+        )
+    )
+    lookup = PricingLookup(
+        {"default": ModelPricing(1, 3, 0)}, records,
+        equivalence_rules=load_model_equivalence_rules(str(conf)),
+    )
+
+    result = lookup.resolve_local_call_pricing("local/qwen")
+
+    assert result.pricing == ModelPricing(5, 5, 0)
+    assert result.status == "future_fallback"
+    assert result.market_status == "future"
+    assert result.provider_count == 2
 
 
 def test_resolve_alias_exact_match() -> None:

@@ -211,7 +211,7 @@ def _build_activity_rows(
         reasoning_tokens = sum(item.call.reasoning_tokens for item in calls)
         cache_read_tokens = sum(item.call.cache_read_tokens for item in calls)
         cache_write_tokens = sum(item.call.cache_write_tokens for item in calls)
-        estimated_cost = sum(item.estimated_cost for item in calls) if include_estimated_cost else 0.0
+        estimated_cost = round(sum(item.estimated_cost for item in calls), 6) if include_estimated_cost else 0.0
         rows.append(
             {
                 "category": category,
@@ -276,7 +276,7 @@ def _detect_model_from_message(message: dict[str, Any]) -> str:
 def _estimate_session_cost_per_call(
     calls: list[_ResolvedCall],
 ) -> float:
-    return sum(item.estimated_cost for item in calls)
+    return round(sum(item.estimated_cost for item in calls), 6)
 
 
 def _resolve_calls(

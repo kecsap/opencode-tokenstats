@@ -48,7 +48,8 @@ def test_model_cost_markers_and_footer(monkeypatch, capsys) -> None:
     assert "4.00" in out
     assert "4.00†" not in out
     assert "3.00*" not in out
-    assert "counterfactual, not spend" in out
+    assert "* generic fallback estimate   † hosted-market estimation" in out
+    assert "counterfactual, not spend" not in out
 
 
 def test_session_report_formats_fractions(monkeypatch, capsys) -> None:
