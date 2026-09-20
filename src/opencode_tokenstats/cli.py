@@ -9,6 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 import re
 import sys
+import time
 from urllib.parse import parse_qs, urlsplit
 
 import click
@@ -28,7 +29,11 @@ if __package__ in {None, ""}:
     from opencode_tokenstats.activity_classifier import classify_session, CATEGORY_LABELS, extract_root_dir
     from opencode_tokenstats.canonical_metrics import build_canonical_metrics
     from opencode_tokenstats.compatibility import analyze_context_compatibility
-    from opencode_tokenstats.local_session_service import LocalSessionService, LocalStorageError
+    from opencode_tokenstats.local_session_service import (
+        MAX_LOCAL_QUERY_WORKERS,
+        LocalSessionService,
+        LocalStorageError,
+    )
     from opencode_tokenstats.renderer import print_period_report, print_session_report, print_status_report
     from opencode_tokenstats.report_schema import build_report_schema, report_to_markdown
     from opencode_tokenstats.session_service import SessionService
@@ -60,7 +65,7 @@ else:
     from .client import ApiClientError, OpencodeApiClient
     from .canonical_metrics import build_canonical_metrics
     from .compatibility import analyze_context_compatibility
-    from .local_session_service import LocalSessionService, LocalStorageError
+    from .local_session_service import MAX_LOCAL_QUERY_WORKERS, LocalSessionService, LocalStorageError
     from .renderer import print_period_report, print_session_report, print_status_report
     from .report_schema import build_report_schema, report_to_markdown
     from .session_service import SessionService
@@ -90,6 +95,27 @@ else:
 
 
 _FORK_PERIOD_METRIC_INPUTS: dict[str, tuple[dict[str, object], list[dict[str, object]]]] = {}
+LOCAL_QUERY_AUTO_THRESHOLD = 1800
+LOCAL_QUERY_AUTO_WORKERS = 4
+
+
+def _parse_local_query_workers(value: str) -> str | int:
+    if value == "auto":
+        return value
+    try:
+        workers = int(value)
+    except ValueError as exc:
+        raise click.BadParameter("must be auto, 1, or a positive integer") from exc
+    if workers < 1:
+        raise click.BadParameter("must be auto, 1, or a positive integer")
+    return workers
+
+
+def _local_query_worker_count(options: dict[str, object], session_count: int) -> int:
+    selected = options.get("local_query_workers", "auto")
+    if selected == "auto":
+        return LOCAL_QUERY_AUTO_WORKERS if session_count >= LOCAL_QUERY_AUTO_THRESHOLD else 1
+    return min(int(selected), MAX_LOCAL_QUERY_WORKERS)
 
 
 class OrderedCommandsGroup(click.Group):
@@ -103,6 +129,7 @@ class OrderedCommandsGroup(click.Group):
         "status",
         "json",
         "health",
+        "local-query-benchmark",
         "tokenizer-warmup",
     ]
 
@@ -137,6 +164,7 @@ class OrderedCommandsGroup(click.Group):
 @click.option("-esl", "--export-session-list", default=None, help="Export selected session IDs to file (one per line)")
 @click.option("-o", "--session-output-dir", default=None, help="Export selected session transcripts to a directory")
 @click.option("--max-ext-tools", default=24, show_default=True, type=click.IntRange(1, None), help="Max external tools to include in External Tools panels")
+@click.option("--local-query-workers", default="auto", show_default=True, help="Local period query workers: auto, 1, or a positive number")
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -156,6 +184,7 @@ def main(
     export_session_list: str | None,
     session_output_dir: str | None,
     max_ext_tools: int,
+    local_query_workers: str,
 ) -> None:
     """OpenCode TokenStats CLI."""
     session_filter_set: set[str] | None = None
@@ -187,9 +216,10 @@ def main(
         "export_session_list": export_session_list,
         "session_output_dir": session_output_dir,
         "max_ext_tools": max_ext_tools,
+        "local_query_workers": _parse_local_query_workers(local_query_workers),
     }
 
-    if not no_warmup and ctx.invoked_subcommand != "tokenizer-warmup":
+    if not no_warmup and ctx.invoked_subcommand not in {"tokenizer-warmup", "local-query-benchmark"}:
         _run_default_warmup_silent()
 
 
@@ -634,6 +664,54 @@ def lifetime(ctx: click.Context) -> None:
     _print_lifetime_report(ctx.obj)
 
 
+@main.command(name="local-query-benchmark", short_help="Benchmark read-only local period query strategies")
+@click.option(
+    "--period",
+    type=click.Choice(["daily", "weekly", "month", "lifetime"]),
+    default="lifetime",
+    show_default=True,
+)
+@click.pass_context
+def local_query_benchmark(ctx: click.Context, period: str) -> None:
+    """Compare local session-ID bucket retrieval without persisting results."""
+    options = ctx.obj
+    if options.get("mode", "local") != "local":
+        raise click.ClickException("local-query-benchmark requires --mode local")
+    db_path = LocalSessionService.find_database_path(options.get("db_path"))
+    service = LocalSessionService(db_path=db_path)
+    sessions = service.list_sessions()
+    session_filter = options.get("session_filter")
+    session_ids = {
+        str(session["id"])
+        for session in sessions
+        if isinstance(session.get("id"), str)
+        and session.get("id")
+        and (
+            not session_filter
+            or extract_root_dir(str(session.get("directory", ""))) in session_filter
+        )
+    }
+    if period == "lifetime":
+        start, end = _lifetime_window(options)
+    else:
+        end = datetime.now(UTC)
+        start = end - timedelta(days={"daily": 1, "weekly": 7, "month": 30}[period])
+
+    timings: dict[int, float] = {}
+    for workers in (1, 2, 4, 8):
+        started = time.perf_counter()
+        service.get_period_messages_bucketed(
+            int(start.timestamp() * 1000),
+            int(end.timestamp() * 1000),
+            session_ids,
+            workers=workers,
+        )
+        timings[workers] = time.perf_counter() - started
+        click.echo(f"workers={workers} elapsed={timings[workers]:.6f}s")
+    recommendation = min(timings, key=timings.get)
+    click.echo(f"recommendation: {recommendation} workers")
+
+
 @main.command(short_help="Aggregate explicit date window (e.g. 2026-05-01..2026-05-07)")
 @click.option("--from-date", required=True, help="YYYY-MM-DD (e.g. 2026-05-01), today, yesterday, or now")
 @click.option("--to-date", required=True, help="YYYY-MM-DD (e.g. 2026-05-07), today, yesterday, or now")
@@ -756,6 +834,7 @@ class _SessionProgress:
     def __init__(self, desc: str = "Gathering OpenCode session data") -> None:
         self._bar: object | None = None
         self._desc = desc
+        self._stage = desc
 
     def __enter__(self) -> "_SessionProgress":
         if TQDM_AVAILABLE and tqdm_mod is not None and sys.stderr.isatty():
@@ -776,15 +855,17 @@ class _SessionProgress:
             self._bar.close()
             self._bar = None
 
-    def update(self, current: int, total: int) -> None:
+    def update(self, current: int, total: int, stage: str | None = None) -> None:
         if self._bar is not None:
+            if stage is not None:
+                self._stage = stage
             if total <= 0:
                 self._bar.total = None
-                self._bar.set_description("Finding in-period sessions")
+                self._bar.set_description(self._stage)
                 self._bar.n = 0
             else:
                 self._bar.total = total
-                self._bar.set_description(self._desc)
+                self._bar.set_description(self._stage)
                 self._bar.n = current
             self._bar.refresh()
 
@@ -1111,7 +1192,7 @@ def _collect_period_session_metrics(
     progress_callback: callable | None = None,
 ) -> list[object]:
     if progress_callback:
-        progress_callback(0, 0)
+        progress_callback(0, 0, "Finding in-period sessions")
     sessions = _list_sessions(options)
     out = []
     model_aliases = load_model_aliases(options.get("model_alias_file"))
@@ -1132,8 +1213,20 @@ def _collect_period_session_metrics(
                 for sid, session in session_by_id.items()
                 if extract_root_dir(str(session.get("directory", ""))) in session_filter
             }
-        period_messages = LocalSessionService(db_path=db_path).get_period_messages(
-            int(start.timestamp() * 1000), int(end.timestamp() * 1000), session_ids=selected_ids
+        if progress_callback:
+            progress_callback(0, 0, "Retrieving period messages")
+        query_ids = selected_ids if selected_ids is not None else set(session_by_id)
+        service = LocalSessionService(db_path=db_path)
+        period_messages = service.get_period_messages_bucketed(
+            int(start.timestamp() * 1000),
+            int(end.timestamp() * 1000),
+            query_ids,
+            workers=_local_query_worker_count(options, len(query_ids)),
+            progress_callback=(
+                lambda current, total: progress_callback(current, total, "Retrieving period messages")
+                if progress_callback
+                else None
+            ),
         )
         for sid, messages in period_messages.items():
             session_info = session_by_id.get(sid, {"id": sid})
@@ -1172,18 +1265,24 @@ def _collect_period_session_metrics(
         max_workers = min(len(eligible_sessions), 8)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(fetch_session, sid, sess): sid for sid, sess in eligible_sessions}
+            if progress_callback:
+                progress_callback(0, len(eligible_sessions), "Retrieving session messages")
+            fetched = 0
             for future in as_completed(futures):
                 try:
                     sid, session_info, messages = future.result()
                     results[sid] = (session_info, messages)
                 except Exception:
                     pass
-        eligible_count = len(eligible_sessions)
+                fetched += 1
+                if progress_callback:
+                    progress_callback(fetched, len(eligible_sessions))
+        eligible_count = len(results)
 
     if not results:
         return out
     if progress_callback:
-        progress_callback(0, eligible_count)
+        progress_callback(0, len(results), "Processing session metrics")
 
     # Preload pricing before workers so fork workers inherit the parsed lookup.
     build_default_pricing_lookup()

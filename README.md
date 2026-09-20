@@ -76,6 +76,12 @@ octoken session --session-id <session-id>
 
 # export machine-readable output
 octoken json --period daily --format json
+
+# compare read-only local query strategies
+octoken local-query-benchmark --period lifetime
+
+# override local period-query workers for reports
+octoken --local-query-workers 4 weekly
 ```
 
 ### Common flows
@@ -125,6 +131,7 @@ If you know [CodeBurn](https://github.com/getagentseal/codeburn), the goal is si
 | `range --from-date --to-date` | Aggregate an explicit date window |
 | `lifetime` | Aggregate all sessions |
 | `json --period ... --format json|md` | Structured export |
+| `local-query-benchmark --period ...` | Compare read-only 1/2/4/8 local query strategies |
 | `tokenizer-warmup` | Preload tokenizer caches |
 | `pricing status` | Inspect ledger records, Fast aliases, and coverage gaps |
 | `pricing import <source> --target <path>` | Merge reviewed dated records into the ledger |
@@ -142,6 +149,16 @@ If you know [CodeBurn](https://github.com/getagentseal/codeburn), the goal is si
 - `--session-filter <root1,root2,...>`
 - `--loc-scope code|all` (default: `code`)
 - `--loc-exclude <pattern1,pattern2,...>`
+- `--local-query-workers auto|1|N` (default: `auto`)
+
+Local period and lifetime reports keep one query for small collections. With the
+fixed `auto` policy, collections of 1,800 or more session IDs use four concurrent
+session-ID buckets. Every bucket contains at most 900 IDs, and workers never exceed
+eight. Use `--local-query-workers 1` to force sequential bounded buckets for large
+collections (`<=900` IDs still use one query), or
+`N` to choose another bounded worker count. `local-query-benchmark` reads the local
+database, compares 1/2/4/8 workers, prints a recommendation, and never writes
+benchmark results, configuration, or database state.
 
 Period reports show three fixed-width aggregate trend charts when selected sessions map
 to Git repositories and have timestamped token telemetry. Git churn counts added plus

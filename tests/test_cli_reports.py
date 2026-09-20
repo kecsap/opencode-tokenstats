@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing as mp
+import sqlite3
 from pathlib import Path
 import sys
 from datetime import UTC, datetime
@@ -127,6 +128,48 @@ def test_period_report_shows_pricing_coverage_and_warnings(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Pricing" in result.output
     assert "unpriced" in result.output
+
+
+def test_local_collection_reports_discovery_and_processing_stages(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    updates = []
+
+    metrics = cli._collect_period_session_metrics(
+        {"mode": "local", "db_path": None, "model_alias_file": None, "session_filter": None, "model_filter": None},
+        datetime.fromtimestamp(1_699_000_000, UTC),
+        datetime.fromtimestamp(1_701_000_000, UTC),
+        progress_callback=lambda *update: updates.append(update),
+    )
+
+    assert len(metrics) == 2
+    assert updates[:3] == [
+        (0, 0, "Finding in-period sessions"),
+        (0, 0, "Retrieving period messages"),
+        (0, 2, "Processing session metrics"),
+    ]
+    assert updates[-1] == (2, 2)
+
+
+def test_api_collection_reports_fetch_and_processing_progress(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
+    updates = []
+
+    metrics = cli._collect_period_session_metrics(
+        {"mode": "api", "model_alias_file": None, "session_filter": None, "model_filter": None},
+        datetime.fromtimestamp(1_699_000_000, UTC),
+        datetime.fromtimestamp(1_701_000_000, UTC),
+        progress_callback=lambda *update: updates.append(update),
+    )
+
+    assert len(metrics) == 2
+    assert updates[0] == (0, 0, "Finding in-period sessions")
+    assert (0, 2, "Retrieving session messages") in updates
+    assert (1, 2) in updates
+    assert (2, 2) in updates
+    assert (0, 2, "Processing session metrics") in updates
+    assert updates[-1] == (2, 2)
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="fork preload coverage is Linux-specific")
@@ -434,3 +477,70 @@ def test_max_ext_tools_option_is_accepted(monkeypatch) -> None:
 
 def test_max_ext_tools_helper_defaults_to_24() -> None:
     assert cli._max_ext_tools({}) == 24
+
+
+def test_local_query_workers_option_is_parsed() -> None:
+    assert cli._parse_local_query_workers("auto") == "auto"
+    assert cli._parse_local_query_workers("6") == 6
+    assert cli._local_query_worker_count({"local_query_workers": 6}, 2000) == 6
+    assert cli._local_query_worker_count({"local_query_workers": "auto"}, 100) == 1
+    assert cli._local_query_worker_count({"local_query_workers": "auto"}, 2000) == 4
+
+
+def test_local_query_benchmark_reports_strategies_without_writes(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(cli.LocalSessionService, "find_database_path", lambda _path: tmp_path / "db.sqlite")
+    monkeypatch.setattr(cli.LocalSessionService, "list_sessions", lambda _service: _sessions())
+    monkeypatch.setattr(cli, "_list_sessions", lambda _options: _sessions())
+    monkeypatch.setattr(
+        cli.LocalSessionService,
+        "get_period_messages",
+        lambda _service, _start, _end, *, session_ids=None: {
+            sid: [] for sid in (session_ids or set())
+        },
+    )
+    before = sorted(path.name for path in tmp_path.iterdir())
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["--no-warmup", "local-query-benchmark", "--period", "daily"])
+    assert result.exit_code == 0
+    assert all(f"workers={workers}" in result.output for workers in (1, 2, 4, 8))
+    assert "recommendation:" in result.output
+    assert sorted(path.name for path in tmp_path.iterdir()) == before
+
+
+def test_local_query_benchmark_live_fixture_does_not_mutate_database(monkeypatch, tmp_path) -> None:
+    monkeypatch.undo()
+    db = tmp_path / "opencode.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, parent_id TEXT, time_created INTEGER, directory TEXT);
+        CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT, time_created INTEGER);
+        CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT, time_created INTEGER);
+        """
+    )
+    session_ids = [f"s{index:04d}" for index in range(901)]
+    conn.executemany(
+        "INSERT INTO session VALUES (?, ?, ?, ?, ?)",
+        [(sid, sid, None, 100, "/repo") for sid in session_ids],
+    )
+    conn.executemany(
+        "INSERT INTO message VALUES (?, ?, ?, ?)",
+        [(f"m{sid}", sid, json.dumps({"role": "assistant"}), 150) for sid in session_ids],
+    )
+    conn.executemany(
+        "INSERT INTO part VALUES (?, ?, ?, ?, ?)",
+        [(f"p{sid}", f"m{sid}", sid, json.dumps({"type": "tool"}), 150) for sid in session_ids],
+    )
+    conn.commit()
+    conn.close()
+    before = db.read_bytes()
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["--no-warmup", "--db-path", str(db), "local-query-benchmark", "--period", "lifetime"],
+    )
+
+    assert result.exit_code == 0
+    assert all(f"workers={workers}" in result.output for workers in (1, 2, 4, 8))
+    assert "recommendation:" in result.output
+    assert db.read_bytes() == before

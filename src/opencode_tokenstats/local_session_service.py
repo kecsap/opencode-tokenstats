@@ -3,12 +3,17 @@ from __future__ import annotations
 import os
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
 
 class LocalStorageError(RuntimeError):
     """Raised when local OpenCode storage cannot be read."""
+
+
+LOCAL_QUERY_BUCKET_SIZE = 900
+MAX_LOCAL_QUERY_WORKERS = 8
 
 
 @dataclass(slots=True)
@@ -241,6 +246,53 @@ class LocalSessionService:
                     conn.close()
                 except Exception:
                     pass
+
+    def get_period_messages_bucketed(
+        self,
+        start_ms: int,
+        end_ms: int,
+        session_ids: set[str],
+        *,
+        workers: int,
+        progress_callback: callable | None = None,
+    ) -> dict[str, list[dict[str, object]]]:
+        """Read disjoint session-ID buckets without changing period semantics."""
+        if not session_ids:
+            return {}
+        ids = sorted(session_ids)
+        if len(ids) <= LOCAL_QUERY_BUCKET_SIZE:
+            return self.get_period_messages(start_ms, end_ms, session_ids=session_ids)
+
+        buckets = [
+            set(ids[index : index + LOCAL_QUERY_BUCKET_SIZE])
+            for index in range(0, len(ids), LOCAL_QUERY_BUCKET_SIZE)
+        ]
+        worker_count = min(max(workers, 1), MAX_LOCAL_QUERY_WORKERS, len(buckets))
+        if progress_callback:
+            progress_callback(0, len(buckets))
+        results: dict[int, dict[str, list[dict[str, object]]]] = {}
+        if worker_count == 1:
+            for index, bucket in enumerate(buckets):
+                results[index] = self.get_period_messages(
+                    start_ms, end_ms, session_ids=bucket
+                )
+                if progress_callback:
+                    progress_callback(index + 1, len(buckets))
+        else:
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = {
+                    executor.submit(self.get_period_messages, start_ms, end_ms, session_ids=bucket): index
+                    for index, bucket in enumerate(buckets)
+                }
+                for future in as_completed(futures):
+                    results[futures[future]] = future.result()
+                    if progress_callback:
+                        progress_callback(len(results), len(buckets))
+
+        merged: dict[str, list[dict[str, object]]] = {}
+        for index in range(len(buckets)):
+            merged.update(results[index])
+        return {session_id: merged[session_id] for session_id in sorted(merged)}
 
     def get_session(self, session_id: str) -> dict[str, object]:
         path = self.db_path or self.find_database_path()
