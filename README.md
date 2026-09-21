@@ -122,6 +122,12 @@ Mixed-basis rows have no `*` marker.
 - **By Activity / Top Sessions** for period dashboards
 - **Period Trends** for correlated token usage, lines changed, and tokens per changed LOC
 
+Period Summary **Sessions** counts sessions matching the selected time window,
+`-sf` session-root filter, and active `-sm` model filter. It does not require
+Git mapping or timestamped telemetry. The Sessions chart is narrower: it only
+uses sessions with Git history and timestamped telemetry, so its count may
+differ from Period Summary.
+
 If you know [CodeBurn](https://github.com/getagentseal/codeburn), the goal is similar: make AI usage visible. This project is narrower and lazier on purpose: **OpenCode-first, simple CLI, no extra stack**.
 
 ---
@@ -169,9 +175,10 @@ database, compares 1/2/4/8 workers, prints a recommendation, and never writes
 benchmark results, configuration, or database state.
 
 Period reports show three fixed-width aggregate trend charts when selected sessions map
-to Git repositories and have timestamped token telemetry. Git churn counts added plus
-deleted lines in `HEAD` history; the report also shows signed net LOC. Sessions without
-both sources are excluded from the charts, while the normal report totals are unchanged.
+to Git repositories and have timestamped token telemetry. Trend points also include
+active unique session counts per bucket. Git churn counts added plus deleted lines in
+`HEAD` history; the report also shows signed net LOC. Sessions without both sources are
+excluded from the charts, while the normal report totals are unchanged.
 
 ---
 

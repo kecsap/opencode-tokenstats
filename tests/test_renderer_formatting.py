@@ -3,6 +3,129 @@ from __future__ import annotations
 from opencode_tokenstats import renderer
 
 
+def test_trend_ratio_footer_uses_delta_loc(monkeypatch) -> None:
+    summaries = []
+    monkeypatch.setattr(renderer, "_build_trend_chart", lambda *args: summaries.append(args[3]) or None)
+    monkeypatch.setattr(renderer, "Columns", lambda items, **_kwargs: items)
+
+    class Console:
+        width = 80
+
+        def print(self, _value) -> None:
+            pass
+
+    renderer._print_trends(
+        Console(),
+        {
+            "points": [{"date": "2026-01-01T00:00:00+00:00"}],
+            "category_tokens_per_loc": {
+                "input_tokens": 1,
+                "cache_read_tokens": 2,
+                "output_tokens": 3,
+            },
+            "outliers": [],
+        },
+    )
+
+    assert summaries[3:6] == [
+        "period 1 tok/ΔLOC",
+        "period 2 tok/ΔLOC",
+        "period 3 tok/ΔLOC",
+    ]
+
+
+def test_trend_sessions_chart_matches_lines_chart(monkeypatch) -> None:
+    charts = []
+    renderables = []
+
+    def build_chart(*args):
+        charts.append(args)
+        return renderer.Panel(args[0], title=args[0])
+
+    monkeypatch.setattr(renderer, "_build_trend_chart", build_chart)
+
+    class Console:
+        width = 80
+
+        def print(self, value) -> None:
+            renderables.append(value)
+
+    renderer._print_trends(
+        Console(),
+        {
+            "points": [
+                {"date": "2026-01-01T00:00:00+00:00", "churn_loc": 3, "sessions": 2},
+                {"date": "2026-01-02T00:00:00+00:00", "churn_loc": 5, "sessions": 4},
+                {"date": "2026-01-03T00:00:00+00:00", "churn_loc": 7, "sessions": 6},
+            ],
+            "included_sessions": 12,
+            "churn_loc": 15,
+            "added_loc": 0,
+            "deleted_loc": 0,
+            "net_loc": 0,
+            "outliers": [
+                {
+                    "date": "2026-01-02T00:00:00+00:00",
+                    "end_date": "2026-01-02T00:00:00+00:00",
+                    "churn_loc": 10,
+                    "added_loc": 10,
+                    "deleted_loc": 0,
+                    "triggers": {},
+                    "commits": [],
+                }
+            ],
+        },
+    )
+
+    lines, sessions = charts[-2:]
+    assert lines[:4] == ("Lines Changed", [3, 5, 7], renderer.COL_ORANGE, "changed 15  +0  -0  net +0")
+    assert sessions[:4] == ("Sessions", [2, 4, 6], renderer.COL_CYAN, "overall 12 sessions")
+    assert lines[4:7] == sessions[4:7] == ("Jan 01", "Jan 02", "Jan 03")
+    trend_row = renderables[2]
+    for row in renderables[:3]:
+        assert isinstance(row, renderer.Table)
+        assert [column.ratio for column in row.columns] == [1, 1, 1]
+        assert len(row.rows) == 1
+    assert isinstance(renderables[3], renderer.Panel)
+    assert renderables[3].title == "[bold]Chart Outliers[/bold]"
+
+
+def test_sessions_chart_renders_in_cache_read_column() -> None:
+    console = renderer.Console(width=200, record=True, color_system=None, force_terminal=False)
+    renderer._print_trends(
+        console,
+        {
+            "points": [
+                {"date": "2026-01-01T00:00:00+00:00", "input_tokens": 10,
+                 "cache_read_tokens": 12, "output_tokens": 8, "churn_loc": 2, "sessions": 1},
+                {"date": "2026-01-02T00:00:00+00:00", "input_tokens": 12,
+                 "cache_read_tokens": 14, "output_tokens": 9, "churn_loc": 3, "sessions": 2},
+                {"date": "2026-01-03T00:00:00+00:00", "input_tokens": 14,
+                 "cache_read_tokens": 16, "output_tokens": 10, "churn_loc": 4, "sessions": 3},
+            ],
+            "included_sessions": 3,
+            "input_tokens": 36,
+            "cache_read_tokens": 42,
+            "output_tokens": 27,
+            "category_tokens_per_loc": {},
+            "churn_loc": 9,
+            "added_loc": 9,
+            "deleted_loc": 0,
+            "net_loc": 9,
+            "outliers": [],
+        },
+    )
+
+    rendered_lines = console.export_text().splitlines()
+
+    def panel_column(title: str) -> int:
+        return next(line.index("╭") for line in rendered_lines if title in line)
+
+    cache_column = panel_column("Cache Read Tokens")
+    assert panel_column("Cache Read Tokens / ΔLOC") == cache_column
+    assert panel_column("Sessions") == cache_column
+
+
 def test_period_report_formats_numbers_and_local_timestamps(monkeypatch, capsys) -> None:
     monkeypatch.setattr(renderer, "RICH_AVAILABLE", False)
 

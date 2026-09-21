@@ -26,10 +26,11 @@ def build_report_schema(
     start: datetime,
     end: datetime,
     session_metrics: list[CanonicalMetrics],
+    session_count: int | None = None,
     model_alias_file: str | None = None,
     session_dirs: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    total_sessions = len(session_metrics)
+    total_sessions = len(session_metrics) if session_count is None else session_count
     total_api_calls = sum(m.api_calls for m in session_metrics)
     total_tokens = sum(m.session_total_tokens for m in session_metrics)
     total_api_cost = round(

@@ -68,6 +68,21 @@ def test_build_report_schema_blocks() -> None:
         assert key in report
 
 
+def test_build_report_schema_uses_explicit_period_session_count() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 2, tzinfo=UTC)
+    report = build_report_schema(
+        period="daily",
+        mode="local",
+        start=start,
+        end=end,
+        session_metrics=[_metric()],
+        session_count=3,
+    )
+    assert report["overview"]["sessions"] == 3
+    assert report["period_series"][0]["sessions"] == 3
+
+
 def test_report_to_markdown() -> None:
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = datetime(2026, 1, 2, tzinfo=UTC)

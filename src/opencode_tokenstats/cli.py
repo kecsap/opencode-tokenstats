@@ -760,6 +760,7 @@ def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
     }
 
     # Apply session filter for JSON output
+    matched_session_count = getattr(session_metrics, "matched_session_count", None)
     session_filter = ctx.obj.get("session_filter")
     if session_filter:
         filtered_ids: set[str] = set()
@@ -780,6 +781,7 @@ def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
         start=start,
         end=end,
         session_metrics=session_metrics,
+        session_count=matched_session_count,
         model_alias_file=ctx.obj.get("model_alias_file"),
         session_dirs=session_dirs_map,
     )
@@ -907,6 +909,7 @@ def _build_period_report(
     session_metrics = _collect_period_session_metrics(
         options, start, end, progress_callback=progress_callback
     )
+    period_session_count = getattr(session_metrics, "matched_session_count", len(session_metrics))
     sessions = _list_sessions(options)
 
     # Build directory lookup for root_dir extraction (from session.directory)
@@ -1174,7 +1177,7 @@ def _build_period_report(
     )
 
     return {
-        "sessions": used,
+        "sessions": period_session_count,
         "api_calls": total_calls,
         "tokens": total_tokens,
         "api_cost": round(total_cost, 6),
@@ -1220,7 +1223,7 @@ def _collect_period_session_metrics(
     if progress_callback:
         progress_callback(0, 0, "Finding in-period sessions")
     sessions = _list_sessions(options)
-    out = []
+    out = _PeriodSessionMetrics()
     model_aliases = load_model_aliases(options.get("model_alias_file"))
     results: dict[str, tuple[dict[str, object], list[dict[str, object]]]] = {}
 
@@ -1258,6 +1261,8 @@ def _collect_period_session_metrics(
             session_info = session_by_id.get(sid, {"id": sid})
             if session_filter and extract_root_dir(str(session_info.get("directory", ""))) not in session_filter:
                 continue
+            if _session_matches_model_filter(messages, options, aliases=model_aliases):
+                out.matched_session_count += 1
             results[sid] = (
                 session_info,
                 _filter_messages_by_model(messages, options, aliases=model_aliases),
@@ -1282,11 +1287,11 @@ def _collect_period_session_metrics(
         if not eligible_sessions:
             return out
 
-        def fetch_session(sid: str, session_info: dict[str, object]) -> tuple[str, dict[str, object], list[dict[str, object]]]:
-            messages = _get_messages(options, sid)
-            messages = _filter_messages_to_period(messages, start, end)
+        def fetch_session(sid: str, session_info: dict[str, object]) -> tuple[str, dict[str, object], list[dict[str, object]], bool]:
+            messages = _filter_messages_to_period(_get_messages(options, sid), start, end)
+            matches_model = _session_matches_model_filter(messages, options, aliases=model_aliases)
             messages = _filter_messages_by_model(messages, options, aliases=model_aliases)
-            return (sid, session_info, messages)
+            return (sid, session_info, messages, matches_model)
 
         max_workers = min(len(eligible_sessions), 8)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -1296,7 +1301,12 @@ def _collect_period_session_metrics(
             fetched = 0
             for future in as_completed(futures):
                 try:
-                    sid, session_info, messages = future.result()
+                    sid, session_info, messages, matches_model = future.result()
+                    if matches_model and (
+                        not options.get("session_filter")
+                        or extract_root_dir(str(session_info.get("directory", ""))) in options["session_filter"]
+                    ):
+                        out.matched_session_count += 1
                     results[sid] = (session_info, messages)
                 except Exception:
                     pass
@@ -1397,6 +1407,44 @@ def _filter_messages_by_model(
         for message in messages
         if message.get("role") != "assistant" or matches(message)
     ]
+
+
+class _PeriodSessionMetrics(list[object]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.matched_session_count = 0
+
+
+def _session_matches_model_filter(
+    messages: list[dict[str, object]],
+    options: dict[str, object],
+    *,
+    aliases: dict[str, str],
+) -> bool:
+    selectors = options.get("model_filter")
+    if not selectors:
+        return True
+    positive = {str(value) for value in selectors if not str(value).startswith("!")}
+    negative = {str(value)[1:] for value in selectors if str(value).startswith("!")}
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        extracted = _extract_model_id_from_message(message)
+        names = {extracted, extracted.rsplit("/", 1)[-1]} - {"", "unknown"}
+        names.add(resolve_alias(extracted, aliases))
+        for call in collect_telemetry_calls([message]):
+            provider = str(getattr(call, "provider_id", "") or "")
+            model = str(getattr(call, "model_id", "") or "")
+            if not model:
+                continue
+            raw = f"{provider}/{model}" if provider else model
+            names.update({raw, model, resolve_alias(raw, aliases)} - {""})
+        names -= {"unknown"}
+        if not names:
+            continue
+        if (not positive or names & positive) and not names & negative:
+            return True
+    return False
 
 
 def _print_report(label: str, report: dict[str, object]) -> None:

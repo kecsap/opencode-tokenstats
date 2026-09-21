@@ -178,6 +178,7 @@ def build_period_trends(
             "churn_loc": 0,
             "net_loc": 0,
             "tokens_per_loc": None,
+            "sessions": 0,
         }
         for index in range(count)
     ]
@@ -219,13 +220,18 @@ def build_period_trends(
             timestamped = [call for call in calls if getattr(call, "timestamp_ms", None) is not None]
             if timestamped:
                 included_sessions += 1
+            active_buckets: set[int] = set()
             for call in timestamped:
                 when = _call_datetime(call)
                 if when is None:
                     continue
                 if not (start <= when < end):
                     continue
-                point = points[_bucket_index(when, start, end, count)]
+                bucket = _bucket_index(when, start, end, count)
+                if bucket not in active_buckets:
+                    points[bucket]["sessions"] += 1
+                    active_buckets.add(bucket)
+                point = points[bucket]
                 has_breakdown = any(
                     hasattr(call, attribute)
                     for attribute in ("input_tokens", "cache_read_tokens", "output_tokens", "reasoning_tokens")
@@ -294,6 +300,7 @@ def build_period_trends(
             "other_commits_delta_loc": max(0, point["churn_loc"] - selected_delta),
         })
     outliers.sort(key=lambda item: max(trigger["ratio"] for trigger in item["triggers"].values()), reverse=True)
+    selected_outliers = sorted(outliers[:5], key=lambda item: (item["date"], item["end_date"]))
     category_totals = {
         key: sum(p[key] for p in points)
         for key in ("input_tokens", "cache_read_tokens", "output_tokens")
@@ -319,5 +326,5 @@ def build_period_trends(
         if total_added + total_deleted else None,
         "outlier_medians": ratio_medians,
         "outlier_thresholds": ratio_thresholds,
-        "outliers": outliers[:5],
+        "outliers": selected_outliers,
     }

@@ -111,6 +111,33 @@ def test_json_command_exposes_pricing_coverage(monkeypatch) -> None:
     assert payload["pricing"]["coverage_percent"] == 100.0
 
 
+def test_json_command_preserves_matched_session_count_after_filter(monkeypatch) -> None:
+    sessions = [
+        {"id": "s1", "directory": "/tmp/alpha"},
+        {"id": "s2", "directory": "/tmp/beta"},
+    ]
+    metrics = cli._PeriodSessionMetrics()
+    for session_id in ("s1", "s2"):
+        metrics.append(
+            CanonicalMetrics(
+                session_id=session_id, model="unknown", input_tokens=0, output_tokens=0,
+                reasoning_tokens=0, cache_read_tokens=0, session_total_tokens=0,
+                api_calls=0, actual_cost_usd=0.0, estimated_cost_usd=0.0,
+                token_composition={}, component_rows=[], component_family_rows=[],
+                core_rows=[], tool_rows=[], mcp_rows=[], per_model_costs=[],
+            )
+        )
+    metrics.matched_session_count = 2
+    monkeypatch.setattr(cli, "_list_sessions", lambda _options: sessions)
+    monkeypatch.setattr(cli, "_collect_period_session_metrics", lambda *args, **kwargs: metrics)
+
+    result = CliRunner().invoke(cli.main, ["--no-warmup", "--session-filter", "alpha", "json", "--period", "daily"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["overview"]["sessions"] == 2
+    assert payload["period_series"][0]["sessions"] == 2
+
+
 def test_json_command_preserves_cost_basis_amounts_and_metadata(monkeypatch) -> None:
     rows = [
         {"model": "shared", "tokens": 1, "estimated_cost": 1.0, "estimated_direct_cost": 1.0, "direct_estimate_calls": 1, "cost_basis": "direct"},
@@ -149,6 +176,33 @@ def test_json_command_preserves_cost_basis_amounts_and_metadata(monkeypatch) -> 
     assert model["market_rate_date"] == "2026-01-01; 2027-01-01"
     assert model["market_status"] == "active; future"
     assert model["cost_basis"] == "direct; generic; market; cloud_equivalent"
+
+
+def test_negative_model_filter_rejects_assistant_without_model_identity() -> None:
+    assert not cli._session_matches_model_filter(
+        [{"role": "assistant", "info": {}}],
+        {"model_filter": ("!denied",)},
+        aliases={},
+    )
+
+
+def test_negative_model_filter_rejects_provider_only_telemetry() -> None:
+    assert not cli._session_matches_model_filter(
+        [
+            {
+                "role": "assistant",
+                "parts": [
+                    {
+                        "type": "step-finish",
+                        "providerID": "openai",
+                        "tokens": {"input": 1, "output": 1},
+                    }
+                ],
+            }
+        ],
+        {"model_filter": ("!denied",)},
+        aliases={},
+    )
 
 
 def test_session_command_shows_pricing_coverage_and_warnings(monkeypatch) -> None:
@@ -246,6 +300,54 @@ def test_api_collection_reports_fetch_and_processing_progress(monkeypatch) -> No
     assert (2, 2) in updates
     assert (0, 2, "Processing session metrics") in updates
     assert updates[-1] == (2, 2)
+
+
+def test_period_session_count_uses_model_identity_without_telemetry(monkeypatch) -> None:
+    sessions = [
+        {"id": "s1", "time_created": 1_700_000_000_000, "directory": "/tmp/alpha"},
+        {"id": "s2", "time_created": 1_700_000_000_000, "directory": "/tmp/beta"},
+        {"id": "s3", "time_created": 1_700_000_000_000, "directory": "/tmp/alpha"},
+    ]
+    messages = {
+        "s1": [{"role": "assistant", "info": {"providerID": "openai", "modelID": "allowed"}}],
+        "s2": [{"role": "assistant", "info": {"providerID": "openai", "modelID": "denied"}}],
+        "s3": [
+            {"role": "assistant", "info": {"providerID": "openai", "modelID": "denied"}},
+            {"role": "assistant", "info": {"providerID": "openai", "modelID": "allowed"}},
+        ],
+    }
+    monkeypatch.setattr(cli, "_list_sessions", lambda _options: sessions)
+    monkeypatch.setattr(cli.LocalSessionService, "find_database_path", lambda _path: None)
+    monkeypatch.setattr(
+        cli.LocalSessionService,
+        "get_period_messages_bucketed",
+        lambda self, *_args, **_kwargs: messages,
+    )
+    monkeypatch.setattr(cli.os, "cpu_count", lambda: 1)
+
+    options = {
+        "mode": "local",
+        "db_path": None,
+        "model_alias_file": None,
+        "session_filter": ("alpha",),
+        "model_filter": ("openai/allowed",),
+    }
+    metrics = cli._collect_period_session_metrics(
+        options,
+        datetime.fromtimestamp(1_699_000_000, UTC),
+        datetime.fromtimestamp(1_701_000_000, UTC),
+    )
+
+    assert metrics.matched_session_count == 2
+    assert {metric.session_id for metric in metrics} == {"s1", "s3"}
+
+    options["model_filter"] = None
+    metrics = cli._collect_period_session_metrics(
+        options,
+        datetime.fromtimestamp(1_699_000_000, UTC),
+        datetime.fromtimestamp(1_701_000_000, UTC),
+    )
+    assert metrics.matched_session_count == 2
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="fork preload coverage is Linux-specific")

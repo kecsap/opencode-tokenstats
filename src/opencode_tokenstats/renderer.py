@@ -357,7 +357,7 @@ def _print_trends(console: Console, trends: dict[str, Any]) -> None:
             f"{title} / ΔLOC",
             fit([p.get(f"{key}_per_loc") for p in points]),
             color,
-            f"period {_trend_value(trends.get('category_tokens_per_loc', {}).get(key))} tok/LOC",
+            f"period {_trend_value(trends.get('category_tokens_per_loc', {}).get(key))} tok/ΔLOC",
             start_label,
             midpoint_label,
             end_label,
@@ -365,8 +365,16 @@ def _print_trends(console: Console, trends: dict[str, Any]) -> None:
         )
         for title, key, color in categories
     ]
-    console.print(Columns(token_charts, equal=True, expand=True, padding=1))
-    console.print(Columns(ratio_charts, equal=True, expand=True, padding=1))
+
+    def print_chart_row(charts: list[Any]) -> None:
+        row = Table.grid(expand=True, padding=(0, 1))
+        for _ in range(3):
+            row.add_column(ratio=1)
+        row.add_row(*charts)
+        console.print(row)
+
+    print_chart_row(token_charts)
+    print_chart_row(ratio_charts)
     git_chart = _build_trend_chart(
         "Lines Changed",
         fit([p.get("churn_loc", 0) for p in points]),
@@ -377,7 +385,17 @@ def _print_trends(console: Console, trends: dict[str, Any]) -> None:
         end_label,
         width,
     )
-    console.print(git_chart)
+    sessions_chart = _build_trend_chart(
+        "Sessions",
+        fit([p.get("sessions", 0) for p in points]),
+        COL_CYAN,
+        f"overall {_fmt_int(trends.get('included_sessions', 0))} sessions",
+        start_label,
+        midpoint_label,
+        end_label,
+        width,
+    )
+    print_chart_row([git_chart, sessions_chart, Text(" ")])
     outliers = trends.get("outliers", [])
     if outliers:
         outlier_table = Table(show_header=True, box=None, expand=False)
