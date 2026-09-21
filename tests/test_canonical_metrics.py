@@ -49,10 +49,10 @@ def test_canonical_metrics_resolves_each_call_once(monkeypatch) -> None:
     calls = 0
     original = PricingLookup.resolve_call_pricing
 
-    def resolve_once(self, model_name, timestamp_ms=None):
+    def resolve_once(self, model_name, timestamp_ms=None, *, include_market=True):
         nonlocal calls
         calls += 1
-        return original(self, model_name, timestamp_ms)
+        return original(self, model_name, timestamp_ms, include_market=include_market)
 
     monkeypatch.setattr(PricingLookup, "resolve_call_pricing", resolve_once)
     out = build_canonical_metrics("s-reuse", [{
@@ -1309,3 +1309,37 @@ def test_unknown_model_usage_uses_default_fallback() -> None:
         "base_rate_calls": 1,
         "tier_unknown_calls": 0,
     }
+
+
+def test_canonical_metrics_uses_nonlocal_models_dev_market_estimate(monkeypatch) -> None:
+    from opencode_tokenstats.pricing import ModelPricing, PricingLookup, PricingRecord
+
+    record = PricingRecord(
+        provider="openai", model="gpt-5", service_profile="standard", context="short",
+        effective_from="2027-01-01T00:00:00Z", effective_to=None, status="active",
+        confidence="observed", source_url="models.dev", retrieved_at="",
+        pricing=ModelPricing(4.0, 8.0, 0.0), aliases=("gpt-5",), source_kind="models.dev",
+    )
+    lookup = PricingLookup({"default": ModelPricing(1.0, 3.0, 0.0)}, (record,), flat_keys=frozenset())
+    monkeypatch.setattr("opencode_tokenstats.canonical_metrics.build_default_pricing_lookup", lambda: lookup)
+
+    message = {
+        "role": "assistant",
+        "info": {"providerID": "openai", "modelID": "gpt-5"},
+        "parts": [{
+            "type": "step-finish", "timestamp": 1767225600000, "cost": 2.0,
+            "tokens": {"input": 1_000_000, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+        }],
+    }
+    estimated_message = {
+        **message,
+        "parts": [{**message["parts"][0], "cost": 0.0}],
+    }
+    out = build_canonical_metrics("s-models-dev", [message, estimated_message])
+
+    row = out.per_model_costs[0]
+    assert out.estimated_cost_usd == pytest.approx(4.0)
+    assert out.actual_cost_usd == pytest.approx(2.0)
+    assert row["estimated_future_market_cost"] == pytest.approx(4.0)
+    assert row["cost"] == pytest.approx(2.0)
+    assert row["market_status"] == "future"

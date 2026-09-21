@@ -229,6 +229,13 @@ def _market_candidates(
             for source in (_normalized_model_segment(model_id),)
         )
     )
+    if automatic and model_id.lower().startswith("openai/") and _normalized_model_segment(model_id).startswith("gpt"):
+        requested = _normalized_model_segment(model_id)
+        found = tuple(
+            record
+            for record in found
+            if any(_normalized_model_segment(candidate) == requested for candidate in (record.model, *record.aliases))
+        )
     return found, rule is not None
 
 
@@ -419,13 +426,14 @@ class PricingLookup:
         self._history_intervals = history_intervals
         self._history_order = history_order
         self._market_candidate_cache: dict[
-            tuple[str, tuple[str, ...] | None], tuple[tuple[PricingRecord, ...], bool]
+            tuple[str, str, tuple[str, ...] | None], tuple[tuple[PricingRecord, ...], bool]
         ] = {}
 
     def _cached_market_candidates(
         self, model_id: str, targets: tuple[str, ...] | None = None
     ) -> tuple[tuple[PricingRecord, ...], bool]:
         key = (
+            model_id.split("/", 1)[0].lower() if "/" in model_id else "",
             _normalized_model_segment(model_id),
             None if targets is None else tuple(_normalized_model_segment(target) for target in targets),
         )
@@ -436,7 +444,7 @@ class PricingLookup:
         return candidates
 
     def resolve_local_call_pricing(self, model_name: str, timestamp_ms: int | None = None) -> PricingResolution:
-        direct = self.resolve_call_pricing(model_name, timestamp_ms)
+        direct = self.resolve_call_pricing(model_name, timestamp_ms, include_market=False)
         direct_record, direct_status = self._match_history_record(
             (model_name or "").strip().lower(), timestamp_ms, exact_only=True
         )
@@ -477,9 +485,16 @@ class PricingLookup:
         )
 
     def _resolve_market_candidates(
-        self, candidates: tuple[PricingRecord, ...], timestamp_ms: int | None
+        self,
+        candidates: tuple[PricingRecord, ...],
+        timestamp_ms: int | None,
+        force_projected: bool = False,
     ) -> PricingResolution | None:
-        paid = [record for record in candidates if any(rate > 0 for rate in _base_rates(record.pricing))]
+        paid = [
+            record
+            for record in candidates
+            if record.status.lower() != "retired" and any(rate > 0 for rate in _base_rates(record.pricing))
+        ]
         if not paid:
             return None
 
@@ -491,7 +506,7 @@ class PricingLookup:
                 return None
 
         selected: list[PricingRecord] = []
-        projected = moment is None
+        projected = moment is None or force_projected
         for provider in {record.provider.lower() for record in paid}:
             provider_records = [record for record in paid if record.provider.lower() == provider]
             if moment is None:
@@ -615,13 +630,28 @@ class PricingLookup:
             return prefix, prefix_key.lower() if prefix_key else None
         return None, None
 
-    def resolve_call_pricing(self, model_name: str, timestamp_ms: int | None = None) -> PricingResolution:
+    def resolve_call_pricing(
+        self,
+        model_name: str,
+        timestamp_ms: int | None = None,
+        *,
+        include_market: bool = True,
+    ) -> PricingResolution:
+        return self._resolve_call_pricing(model_name, timestamp_ms, include_market=include_market)
+
+    def _resolve_call_pricing(
+        self,
+        model_name: str,
+        timestamp_ms: int | None = None,
+        include_market: bool = True,
+    ) -> PricingResolution:
         """Resolve the rate active for one call at its timestamp.
 
         Historical records win for known models; calls before the first known
-        record use the earliest later record ("future_fallback"). Unknown,
-        retired, or timestamp-less calls use the legacy default unless an
-        explicit flat-file override exists.
+        record use the earliest later record ("future_fallback"). Non-local
+        calls without a direct historical match may use paid market records;
+        unknown, retired, or unavailable calls use the legacy default unless
+        an explicit flat-file override exists.
         """
         raw_name = (model_name or "").strip().lower()
         if not raw_name:
@@ -644,6 +674,24 @@ class PricingLookup:
         pricing, key = self._find_pricing_key(raw_name)
         if pricing is not None and key is not None and key in self.flat_keys:
             return PricingResolution(pricing=pricing, status="flat_override", provenance=f"flat:{key}")
+
+        if not include_market:
+            return PricingResolution(
+                pricing=self.pricing_data.get("default", _default_pricing()),
+                status="default_fallback",
+                provenance="default",
+            )
+
+        candidates, _ = self._cached_market_candidates(model_name)
+        provider = raw_name.split("/", 1)[0] if "/" in raw_name else ""
+        same_provider = tuple(record for record in candidates if record.provider.lower() == provider)
+        resolution = self._resolve_market_candidates(same_provider, timestamp_ms)
+        if resolution is not None:
+            return resolution
+        cross_provider = tuple(record for record in candidates if record.provider.lower() != provider)
+        resolution = self._resolve_market_candidates(cross_provider, timestamp_ms, force_projected=True)
+        if resolution is not None:
+            return resolution
         return PricingResolution(
             pricing=self.pricing_data.get("default", _default_pricing()),
             status="default_fallback",

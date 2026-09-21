@@ -733,6 +733,175 @@ def test_resolve_call_pricing_before_first_period_is_future_fallback() -> None:
     assert resolution.provenance == "https://example.com/old"
 
 
+def test_resolve_call_pricing_projects_same_provider_market_rate() -> None:
+    record = PricingRecord(
+        provider="anthropic", model="claude-sonnet", service_profile="standard", context="short",
+        effective_from="2026-01-01T00:00:00Z", effective_to=None, status="active", confidence="observed",
+        source_url="anthropic", retrieved_at="", pricing=ModelPricing(2, 4, 0), aliases=("claude-sonnet",),
+    )
+    lookup = PricingLookup({"default": ModelPricing(1, 3, 0)}, (record,), flat_keys=frozenset())
+
+    result = lookup.resolve_call_pricing("anthropic/claude-sonnet-v2", _ms("2025-12-01T00:00:00Z"))
+
+    assert result.pricing == record.pricing
+    assert result.status == "future_fallback"
+    assert result.provider_count == 1
+
+
+def test_local_resolution_does_not_suppress_reentrant_market_resolution() -> None:
+    record = PricingRecord(
+        provider="market", model="qwen", service_profile="standard", context="short",
+        effective_from="2026-01-01T00:00:00Z", effective_to=None, status="active", confidence="observed",
+        source_url="market", retrieved_at="", pricing=ModelPricing(2, 4, 0), aliases=("qwen",),
+    )
+    lookup = PricingLookup({"default": ModelPricing(1, 3, 0)}, (record,), flat_keys=frozenset())
+    original_match = lookup._match_history_record
+    nested: list[object] = []
+
+    def match(raw_name: str, timestamp_ms: int | None, exact_only: bool = False):
+        if not nested:
+            nested.append(None)
+            nested[0] = lookup.resolve_call_pricing("local/qwen-v2", timestamp_ms)
+        return original_match(raw_name, timestamp_ms, exact_only)
+
+    lookup._match_history_record = match  # type: ignore[method-assign]
+    lookup.resolve_local_call_pricing("local/qwen-v2", _ms("2026-06-01T00:00:00Z"))
+
+    assert nested[0].status == "future_fallback"
+
+
+def test_resolve_call_pricing_cross_provider_market_uses_one_vote_per_provider() -> None:
+    records = tuple(
+        PricingRecord(
+            provider=provider, model="claude-sonnet", service_profile="standard", context="short",
+            effective_from=effective_from, effective_to=None, status="active", confidence="observed",
+            source_url=provider, retrieved_at="", pricing=ModelPricing(rate, rate, 0),
+            aliases=("claude-sonnet",),
+        )
+        for provider, effective_from, rate in (
+            ("alpha", "2025-01-01T00:00:00Z", 2),
+            ("alpha", "2026-01-01T00:00:00Z", 6),
+            ("beta", "2025-01-01T00:00:00Z", 10),
+        )
+    )
+    lookup = PricingLookup({"default": ModelPricing(1, 3, 0)}, records, flat_keys=frozenset())
+
+    result = lookup.resolve_call_pricing("target/claude-sonnet-v2", _ms("2026-06-01T00:00:00Z"))
+
+    assert result.pricing == ModelPricing(8, 8, 0)
+    assert result.status == "future_fallback"
+    assert result.market_status == "future"
+    assert result.provider_count == 2
+
+
+def test_resolve_call_pricing_does_not_substitute_openai_gpt_variant() -> None:
+    record = PricingRecord(
+        provider="openai", model="gpt-4o", service_profile="standard", context="short",
+        effective_from="2026-01-01T00:00:00Z", effective_to=None, status="active", confidence="observed",
+        source_url="openai", retrieved_at="", pricing=ModelPricing(2, 4, 0), aliases=("gpt-4o",),
+    )
+    lookup = PricingLookup({"default": ModelPricing(1, 3, 0)}, (record,), flat_keys=frozenset())
+
+    result = lookup.resolve_call_pricing("openai/gpt-4o-mini", _ms("2026-06-01T00:00:00Z"))
+
+    assert result.status == "default_fallback"
+    assert result.pricing == ModelPricing(1, 3, 0)
+
+
+def test_nonlocal_market_fallback_uses_models_dev_and_latest_paid_records() -> None:
+    records = (
+        PricingRecord(
+            provider="openai", model="gpt-5", service_profile="standard", context="short",
+            effective_from="2027-01-01T00:00:00Z", effective_to=None, status="active",
+            confidence="observed", source_url="models.dev/openai", retrieved_at="",
+            pricing=ModelPricing(4, 8, 0), aliases=("gpt-5",), source_kind="models.dev",
+        ),
+        PricingRecord(
+            provider="other", model="gpt-6", service_profile="standard", context="short",
+            effective_from="2027-01-01T00:00:00Z", effective_to=None, status="active",
+            confidence="observed", source_url="models.dev/other", retrieved_at="",
+            pricing=ModelPricing(6, 10, 0), aliases=("gpt-6",), source_kind="models.dev",
+        ),
+        PricingRecord(
+            provider="other", model="free-model", service_profile="standard", context="short",
+            effective_from="2026-01-01T00:00:00Z", effective_to=None, status="active",
+            confidence="observed", source_url="models.dev/free", retrieved_at="",
+            pricing=ModelPricing(0, 0, 0), aliases=("free-model",), source_kind="models.dev",
+        ),
+    )
+    lookup = PricingLookup({"default": ModelPricing(1, 3, 0)}, records, flat_keys=frozenset())
+
+    projected = lookup.resolve_call_pricing("openai/gpt-5", _ms("2026-06-01T00:00:00Z"))
+    assert projected.pricing == records[0].pricing
+    assert projected.status == "future_fallback"
+    assert projected.market_status == "future"
+
+    latest = lookup.resolve_call_pricing("openai/gpt-5")
+    assert latest.pricing == ModelPricing(4, 8, 0)
+    assert latest.status == "future_fallback"
+
+    cross_provider = lookup.resolve_call_pricing("missing/gpt-6", _ms("2026-06-01T00:00:00Z"))
+    assert cross_provider.pricing == records[1].pricing
+    assert cross_provider.market_status == "future"
+
+    free = lookup.resolve_call_pricing("other/free-model-v2", _ms("2026-06-01T00:00:00Z"))
+    assert free.status == "default_fallback"
+
+    variant = lookup.resolve_call_pricing("openai/gpt-5-mini", _ms("2026-06-01T00:00:00Z"))
+    assert variant.status == "default_fallback"
+
+
+def test_nonlocal_models_dev_active_rate_is_unmarked() -> None:
+    record = PricingRecord(
+        provider="openai", model="gpt-5", service_profile="standard", context="short",
+        effective_from="2026-01-01T00:00:00Z", effective_to=None, status="active",
+        confidence="observed", source_url="models.dev/openai", retrieved_at="",
+        pricing=ModelPricing(4, 8, 0), aliases=("gpt-5",), source_kind="models.dev",
+    )
+    lookup = PricingLookup({"default": ModelPricing(1, 3, 0)}, (record,), flat_keys=frozenset())
+
+    result = lookup.resolve_call_pricing("openai/gpt-5", _ms("2026-06-01T00:00:00Z"))
+
+    assert result.status == "active"
+    assert result.market_status == ""
+    assert result.pricing == record.pricing
+
+
+def test_nonlocal_models_dev_after_last_observation_is_projected() -> None:
+    record = PricingRecord(
+        provider="openai", model="gpt-5", service_profile="standard", context="short",
+        effective_from="2025-01-01T00:00:00Z", effective_to="2026-01-01T00:00:00Z",
+        status="active", confidence="observed", source_url="models.dev/openai", retrieved_at="",
+        pricing=ModelPricing(4, 8, 0), aliases=("gpt-5",), source_kind="models.dev",
+    )
+    lookup = PricingLookup({"default": ModelPricing(1, 3, 0)}, (record,), flat_keys=frozenset())
+
+    result = lookup.resolve_call_pricing("openai/gpt-5", _ms("2026-06-01T00:00:00Z"))
+
+    assert result.status == "future_fallback"
+    assert result.market_status == "future"
+    assert result.pricing == record.pricing
+
+
+def test_market_candidate_cache_keeps_openai_strict_matching_provider_isolated() -> None:
+    records = tuple(
+        PricingRecord(
+            provider=provider, model="gpt-4o", service_profile="standard", context="short",
+            effective_from="2026-01-01T00:00:00Z", effective_to=None, status="active", confidence="observed",
+            source_url=provider, retrieved_at="", pricing=ModelPricing(rate, rate, 0), aliases=("gpt-4o",),
+        )
+        for provider, rate in (("anthropic", 3), ("openai", 2))
+    )
+    lookup = PricingLookup({"default": ModelPricing(1, 3, 0)}, records, flat_keys=frozenset())
+    timestamp = _ms("2026-06-01T00:00:00Z")
+
+    fuzzy = lookup.resolve_call_pricing("anthropic/gpt-4o-mini", timestamp)
+    strict = lookup.resolve_call_pricing("openai/gpt-4o-mini", timestamp)
+
+    assert fuzzy.pricing == ModelPricing(3, 3, 0)
+    assert strict.status == "default_fallback"
+
+
 def test_resolve_call_pricing_unknown_retired_and_missing_timestamp_use_default_fallback() -> None:
     data, history = _parse_pricing_history(_two_period_payload())
     lookup = PricingLookup(data, history, flat_keys=frozenset())
@@ -749,8 +918,9 @@ def test_resolve_call_pricing_unknown_retired_and_missing_timestamp_use_default_
     assert retired.pricing is not None
 
     no_timestamp = lookup.resolve_call_pricing("openai/gpt-x", None)
-    assert no_timestamp.status == "default_fallback"
+    assert no_timestamp.status == "future_fallback"
     assert no_timestamp.pricing is not None
+    assert no_timestamp.pricing.input == 4.0
 
 
 

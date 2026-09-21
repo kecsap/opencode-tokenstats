@@ -37,7 +37,7 @@ def test_model_cost_markers_and_footer(monkeypatch, capsys) -> None:
             "model_costs": [
                 {"model": "generic", "estimated_cost": 1.0, "estimated_generic_cost": 1.0},
                 {"model": "future", "estimated_cost": 2.0, "estimated_future_market_cost": 2.0},
-                {"model": "active", "estimated_cost": 4.0, "estimated_market_cost": 4.0, "market_status": "active"},
+                {"model": "active", "estimated_cost": 4.0, "estimated_market_cost": 4.0, "market_provider_count": 2, "market_status": "active"},
                 {"model": "mixed", "estimated_cost": 3.0, "estimated_generic_cost": 1.0},
             ],
         },
@@ -45,11 +45,33 @@ def test_model_cost_markers_and_footer(monkeypatch, capsys) -> None:
     out = capsys.readouterr().out
     assert "1.00*" in out
     assert "2.00†" in out
-    assert "4.00" in out
-    assert "4.00†" not in out
+    assert "4.00†" in out
     assert "3.00*" not in out
     assert "* generic fallback estimate   † hosted-market estimation" in out
     assert "counterfactual, not spend" not in out
+
+
+def test_model_cost_currency_display_preserves_json_values(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(renderer, "RICH_AVAILABLE", False)
+    renderer.print_period_report(
+        "daily",
+        {
+            "sessions": 1,
+            "api_calls": 1,
+            "tokens": 1,
+            "from": "2026-05-01T00:00:00+00:00",
+            "to": "2026-05-02T00:00:00+00:00",
+            "model_costs": [
+                {"model": "zero", "api_cost": 0.0, "estimated_cost": 0.0},
+                {"model": "small", "api_cost": 0.001, "estimated_cost": 0.001},
+            ],
+        },
+    )
+    out = capsys.readouterr().out
+    assert "'api_cost': '-'" in out
+    assert "'estimated_cost': '-'" in out
+    assert "'api_cost': '<0.01'" in out
+    assert "'estimated_cost': '<0.01'" in out
 
 
 def test_session_report_formats_fractions(monkeypatch, capsys) -> None:

@@ -108,11 +108,13 @@ The report focuses on the stuff that matters when AI usage gets expensive or noi
 - **Token Composition** to separate productive output from context overhead
 - **Model Costs** to see where spend concentrates
 
-Model Costs shows actual API charges separately from local estimates. The footer
-defines only markers present in displayed rows: `* generic fallback estimate`
-marks rows made entirely from generic fallback rates; `† hosted-market
-estimation` marks projected hosted-market amounts. These estimates are
-counterfactual pricing, not money spent. Mixed-basis rows have no `*` marker.
+Model Costs shows actual API charges separately from local estimates. Exact zero
+currency values display as `-`; non-zero values below one cent display as
+`<0.01`. The footer defines only markers present in displayed rows: `* generic
+fallback estimate` marks rows made entirely from generic fallback rates; `†
+hosted-market estimation` marks projected or cross-provider hosted-market
+amounts. These estimates are counterfactual pricing, not money spent.
+Mixed-basis rows have no `*` marker.
 - **Top Tools** to spot tool-heavy sessions
 - **Component Contribution** to understand MCP/skill/subagent families
 - **OpenCode Contribution** to measure built-in tool overhead

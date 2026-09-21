@@ -51,6 +51,18 @@ def _fmt_float(value: Any) -> str:
         return str(value)
 
 
+def _fmt_currency(value: Any) -> str:
+    try:
+        amount = float(value)
+        if amount == 0:
+            return "-"
+        if 0 < amount < 0.01:
+            return "<0.01"
+        return f"{amount:.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def _fmt_ts_local(value: Any) -> str:
     if not isinstance(value, str):
         return str(value)
@@ -427,11 +439,23 @@ def _format_pricing_coverage(coverage: dict[str, Any] | None) -> str | None:
 
 
 def _model_estimate_label(item: dict[str, Any]) -> str:
-    value = _fmt_float(item.get("estimated_cost"))
+    value = _fmt_currency(item.get("estimated_cost"))
     if float(item.get("estimated_future_market_cost", 0) or 0) > 0:
         return value + "†"
-    if float(item.get("estimated_generic_cost", 0) or 0) > 0 and float(item.get("estimated_cost", 0) or 0) == float(item.get("estimated_generic_cost", 0) or 0):
+    if (
+        float(item.get("estimated_generic_cost", 0) or 0) > 0
+        and float(item.get("estimated_cost", 0) or 0)
+        == float(item.get("estimated_generic_cost", 0) or 0)
+        and not float(item.get("estimated_direct_cost", 0) or 0)
+        and not float(item.get("estimated_market_cost", 0) or 0)
+        and not float(item.get("estimated_cloud_equivalent_cost", 0) or 0)
+    ):
         return value + "*"
+    if (
+        float(item.get("estimated_market_cost", 0) or 0) > 0
+        and int(item.get("market_provider_count", 0) or 0) > 1
+    ):
+        return value + "†"
     return value
 
 
@@ -441,10 +465,17 @@ def _model_costs_footer(model_costs: list[dict[str, Any]]) -> Text:
         and float(row.get("estimated_cost", 0) or 0)
         == float(row.get("estimated_generic_cost", 0) or 0)
         and float(row.get("estimated_future_market_cost", 0) or 0) <= 0
+        and not float(row.get("estimated_direct_cost", 0) or 0)
+        and not float(row.get("estimated_market_cost", 0) or 0)
+        and not float(row.get("estimated_cloud_equivalent_cost", 0) or 0)
         for row in model_costs
     )
     has_projected_market = any(
         float(row.get("estimated_future_market_cost", 0) or 0) > 0
+        or (
+            float(row.get("estimated_market_cost", 0) or 0) > 0
+            and int(row.get("market_provider_count", 0) or 0) > 1
+        )
         for row in model_costs
     )
     markers = []
@@ -487,7 +518,14 @@ def print_session_report(
         if top_tools:
             print(f"External Tools: {top_tools}")
         if model_costs:
-            displayed = [dict(item, estimated_cost=_model_estimate_label(item)) for item in model_costs]
+            displayed = [
+                dict(
+                    item,
+                    api_cost=_fmt_currency(item.get("api_cost")),
+                    estimated_cost=_model_estimate_label(item),
+                )
+                for item in model_costs
+            ]
             print(f"Model Costs: {displayed}")
             footer = _model_costs_footer(model_costs)
             if footer.plain:
@@ -547,7 +585,7 @@ def print_session_report(
                 f"{float(item.get('input_percent', 0)):.2f}",
                 f"{float(item.get('output_percent', 0)):.2f}",
                 f"{float(item.get('reasoning_percent', 0)):.2f}",
-                _fmt_float(api_cost),
+                _fmt_currency(api_cost),
                 _model_estimate_label(item),
             )
         model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN)
@@ -646,7 +684,14 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
         if report.get("top_tools"):
             print(f"External Tools: {report['top_tools']}")
         if report.get("model_costs"):
-            displayed = [dict(item, estimated_cost=_model_estimate_label(item)) for item in report["model_costs"]]
+            displayed = [
+                dict(
+                    item,
+                    api_cost=_fmt_currency(item.get("api_cost")),
+                    estimated_cost=_model_estimate_label(item),
+                )
+                for item in report["model_costs"]
+            ]
             print(f"Model Costs: {displayed}")
             footer = _model_costs_footer(report["model_costs"])
             if footer.plain:
@@ -725,7 +770,7 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 f"{float(item.get('input_percent', 0)):.2f}",
                 f"{float(item.get('output_percent', 0)):.2f}",
                 f"{float(item.get('reasoning_percent', 0)):.2f}",
-                _fmt_float(api_cost),
+                _fmt_currency(api_cost),
                 _model_estimate_label(item),
             )
         model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN, expand=False)
