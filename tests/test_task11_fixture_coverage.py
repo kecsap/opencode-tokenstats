@@ -28,9 +28,10 @@ def test_multi_provider_fixture_coverage() -> None:
     assert any(r["component_type"] == "core" for r in m2.component_rows)  # explore/general are core subagents
 
     assert m3.actual_cost_usd == 0.0
-    # openai/gpt-5.3-codex has no pricing record in bundled history: use default fallback.
-    assert round(m3.estimated_cost_usd, 6) == 0.000208
-    assert m3.pricing_coverage["default_fallback_calls"] == 1
+    # 2024 fixture timestamp resolves through future models.dev market pricing.
+    assert m3.per_model_costs[0]["estimated_future_market_cost"] > 0
+    assert m3.pricing_coverage["future_fallback_calls"] == 1
+    assert m3.pricing_coverage["default_fallback_calls"] == 0
     assert m3.pricing_coverage["coverage_percent"] == 100.0
 
 

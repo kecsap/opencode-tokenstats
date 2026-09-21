@@ -51,6 +51,131 @@ def test_model_cost_markers_and_footer(monkeypatch, capsys) -> None:
     assert "counterfactual, not spend" not in out
 
 
+def test_rich_model_cost_notes_are_final_styled_table_row(monkeypatch) -> None:
+    captured = []
+
+    class CaptureConsole:
+        def print(self, renderable) -> None:
+            captured.append(renderable)
+
+    monkeypatch.setattr(renderer, "RICH_AVAILABLE", True)
+    monkeypatch.setattr(renderer, "Console", CaptureConsole)
+
+    renderer.print_session_report(
+        "s1",
+        api_calls=1,
+        tokens=10,
+        api_cost=0,
+        model_costs=[
+            {"model": "generic", "estimated_cost": 1, "estimated_generic_cost": 1},
+            {
+                "model": "hosted",
+                "estimated_cost": 2,
+                "estimated_future_market_cost": 2,
+            },
+        ],
+    )
+
+    table = captured[-1].renderable
+    note_cells = [column._cells[-1] for column in table.columns]
+    note = note_cells[0]
+    assert note.plain == "* generic fallback estimate   † hosted-market estimation"
+    assert note.style == renderer.COL_AXIS
+    assert "bold" not in note.style
+    assert all(not cell for cell in note_cells[1:])
+
+
+def test_rich_model_cost_notes_omitted_without_markers(monkeypatch) -> None:
+    captured = []
+
+    class CaptureConsole:
+        def print(self, renderable) -> None:
+            captured.append(renderable)
+
+    monkeypatch.setattr(renderer, "RICH_AVAILABLE", True)
+    monkeypatch.setattr(renderer, "Console", CaptureConsole)
+
+    renderer.print_session_report(
+        "s1",
+        api_calls=1,
+        tokens=10,
+        api_cost=0,
+        model_costs=[{"model": "direct", "estimated_cost": 1, "estimated_direct_cost": 1}],
+    )
+
+    table = captured[-1].renderable
+    assert len(table.rows) == 1
+
+
+def test_rich_model_cost_notes_support_single_markers(monkeypatch) -> None:
+    captured = []
+
+    class CaptureConsole:
+        def print(self, renderable) -> None:
+            captured.append(renderable)
+
+    monkeypatch.setattr(renderer, "RICH_AVAILABLE", True)
+    monkeypatch.setattr(renderer, "Console", CaptureConsole)
+
+    for model_cost, expected in [
+        ({"estimated_generic_cost": 1}, "* generic fallback estimate"),
+        ({"estimated_future_market_cost": 1}, "† hosted-market estimation"),
+    ]:
+        captured.clear()
+        renderer.print_session_report(
+            "s1",
+            api_calls=1,
+            tokens=10,
+            api_cost=0,
+            model_costs=[{"model": "model", "estimated_cost": 1, **model_cost}],
+        )
+
+        table = captured[-1].renderable
+        note_cells = [column._cells[-1] for column in table.columns]
+        assert note_cells[0].plain == expected
+        assert note_cells[0].style == renderer.COL_AXIS
+        assert "bold" not in note_cells[0].style
+        assert all(not cell for cell in note_cells[1:])
+
+
+def test_rich_period_model_cost_notes_are_final_table_row(monkeypatch) -> None:
+    captured = []
+
+    class CaptureConsole:
+        def print(self, renderable) -> None:
+            captured.append(renderable)
+
+    monkeypatch.setattr(renderer, "RICH_AVAILABLE", True)
+    monkeypatch.setattr(renderer, "Console", CaptureConsole)
+
+    renderer.print_period_report(
+        "daily",
+        {
+            "sessions": 1,
+            "api_calls": 1,
+            "tokens": 10,
+            "from": "2026-05-01T00:00:00+00:00",
+            "to": "2026-05-02T00:00:00+00:00",
+            "model_costs": [
+                {"model": "hosted", "estimated_cost": 1, "estimated_future_market_cost": 1},
+            ],
+        },
+    )
+
+    model_costs_panel = captured[0].renderables[1]
+    assert isinstance(model_costs_panel, renderer.Panel)
+    table = model_costs_panel.renderable
+    note_cells = [column._cells[-1] for column in table.columns]
+    assert note_cells[0].plain == "† hosted-market estimation"
+    assert note_cells[0].style == renderer.COL_AXIS
+    assert "bold" not in note_cells[0].style
+    assert all(not cell for cell in note_cells[1:])
+    assert not any(
+        getattr(renderable, "plain", "") == "† hosted-market estimation"
+        for renderable in captured
+    )
+
+
 def test_model_cost_currency_display_preserves_json_values(monkeypatch, capsys) -> None:
     monkeypatch.setattr(renderer, "RICH_AVAILABLE", False)
     renderer.print_period_report(

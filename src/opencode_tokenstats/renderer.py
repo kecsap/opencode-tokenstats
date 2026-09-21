@@ -485,7 +485,7 @@ def _model_costs_footer(model_costs: list[dict[str, Any]]) -> Text:
         markers.append("† hosted-market estimation")
     if not markers:
         return Text("")
-    return Text("   ".join(markers), style=COL_DIM)
+    return Text("   ".join(markers), style=COL_AXIS)
 
 
 def print_session_report(
@@ -588,9 +588,11 @@ def print_session_report(
                 _fmt_currency(api_cost),
                 _model_estimate_label(item),
             )
-        model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN)
         footer = _model_costs_footer(shown_models)
-        console.print(Group(model_costs_panel, footer) if footer.plain else model_costs_panel)
+        if footer.plain:
+            mt.add_row(footer, *([""] * 7))
+        model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN)
+        console.print(model_costs_panel)
 
     if mcp_stats and mcp_stats.get("rows"):
         mcp = Table(show_header=True, box=None, padding=(0, 0, 0, 1))
@@ -773,10 +775,10 @@ def print_period_report(label: str, report: dict[str, Any]) -> None:
                 _fmt_currency(api_cost),
                 _model_estimate_label(item),
             )
-        model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN, expand=False)
         footer = _model_costs_footer(shown_models)
         if footer.plain:
-            model_costs_panel = Group(model_costs_panel, footer)
+            mt.add_row(footer, *([""] * 7))
+        model_costs_panel = Panel(mt, title="[bold]Model Costs[/bold]", border_style=COL_GREEN, expand=False)
     else:
         model_costs_panel = None
 
