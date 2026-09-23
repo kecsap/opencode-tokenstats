@@ -10,7 +10,10 @@ from click.testing import CliRunner
 from opencode_tokenstats import cli
 from opencode_tokenstats.client import ApiClientError
 from opencode_tokenstats.pricing import (
+    ModelPricing,
+    _parse_context_pricing,
     _parse_pricing_history,
+    _select_pricing_rate,
     load_pricing_ledger,
     merge_pricing_history,
     normalize_pricing_date,
@@ -81,6 +84,7 @@ def test_parse_official_openai_pricing_splits_standard_and_fast() -> None:
     assert standard["source"] == {
         "url": "https://openai.com/api/pricing/",
         "retrieved_at": "2026-09-19T12:00:00Z",
+        "kind": "provider_official",
     }
     assert standard["rates"]["input"] == 1.0
     assert standard["rates"]["cacheRead"] == 0.5
@@ -202,10 +206,49 @@ def test_pricing_status_report_bundled_ledger() -> None:
     report = pricing_status_report(payload)
     by_key = {(r["provider"], r["model"], r["service_profile"]): r for r in report["records"]}
     assert by_key[("openai", "gpt-5.6-terra", "standard")]["status"] == "active"
-    assert by_key[("openai", "gpt-5.6-terra", "standard")]["source_url"] == "https://openai.com/api/pricing/"
+    assert by_key[("openai", "gpt-5.6-terra", "standard")]["source_url"] == "https://developers.openai.com/api/docs/pricing"
     assert "gpt-5.6-terra-fast" in report["fast_aliases"]
     assert "gpt-5.6-luna-fast" in report["fast_aliases"]
     assert by_key[("openai", "gpt-5.6-luna", "standard")]["status"] == "active"
+
+
+def test_bundled_official_rates_keep_catalog_history_and_terra_tiers() -> None:
+    records = load_pricing_ledger()["records"]
+    official = [
+        row for row in records
+        if row["provider"] == "openai" and row["source"].get("kind") == "provider_official"
+    ]
+    assert all(row["context"] == "short" and row["confidence"] for row in official)
+    assert all(row["status"] in {"active", "retired"} for row in official)
+
+    start = "2026-09-23T14:43:46Z"
+    tiers = {
+        "gpt-5.6-terra": ("standard", (2, 0.2, 2.5, 12), (4, 0.4, 5, 18)),
+        "gpt-5.6-terra-fast": ("fast", (4, 0.4, 5, 24), (8, 0.8, 10, 36)),
+        "gpt-5.6-luna-fast": ("fast", (0.4, 0.04, 0.5, 2.4), (0.8, 0.08, 1, 3.6)),
+    }
+    dimensions = ("input", "cacheRead", "cacheWrite", "output")
+    for model, (profile, base, long) in tiers.items():
+        dated = sorted(
+            (row for row in official if row["model"] == model and row["service_profile"] == profile),
+            key=lambda row: row["effective_from"],
+        )
+        assert [row["effective_from"] for row in dated] == ["2026-09-18T00:00:00Z", start]
+        assert dated[0]["effective_to"] == start
+        assert dated[1]["effective_to"] is None
+        assert tuple(dated[1]["rates"][key] for key in dimensions) == base
+        assert tuple(dated[1]["rates"]["contextOver200k"][key] for key in dimensions) == long
+
+    embeddings = {"text-embedding-3-small": 0.02, "text-embedding-3-large": 0.13,
+                  "text-embedding-ada-002": 0.10}
+    for model, input_rate in embeddings.items():
+        row = next(row for row in official if row["model"] == model)
+        assert row["rates"] == {"input": input_rate, "cacheRead": 0,
+                                "cacheWrite": 0, "output": 0}
+
+    astra = next(row for row in records if row["provider"] == "openai"
+                 and row["model"] == "gpt-6-astra" and row["source"].get("kind") == "models.dev")
+    assert astra["effective_to"] is None
 
 
 def test_cli_pricing_status_offline() -> None:
@@ -395,6 +438,117 @@ def test_parse_official_openai_pricing_html() -> None:
         parse_official_openai_pricing_html("<html><body>no pricing tables</body></html>")
 
 
+def test_parse_specialized_tables_and_reject_invalid_rates() -> None:
+    html = """
+    <table><tr><th>Category</th><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th></tr>
+    <tr><td>Standard</td><td>gpt-9-codex (1M context length)</td><td>$2</td><td>-</td><td>$4</td></tr>
+    <tr><td>Fast</td><td>gpt-9-codex</td><td>$3</td><td>$0.3</td><td>$6</td></tr>
+    <tr><td>Batch</td><td>gpt-9-batch</td><td>$1</td><td>-</td><td>$2</td></tr>
+    <tr><td>Flex</td><td>gpt-9-flex</td><td>$1</td><td>-</td><td>$2</td></tr>
+    <tr><td>Standard</td><td>bad-cache</td><td>$1</td><td>unknown</td><td>$2</td></tr>
+    <tr><td>Standard</td><td>bad-input</td><td>-</td><td>-</td><td>$2</td></tr></table>
+    <table><tr><th>Model</th><th>Audio input</th><th>Audio output</th></tr><tr><td>audio-model</td><td>$1</td><td>$2</td></tr></table>
+    <div id="content-switcher-latest-pricing"><div data-value="standard">
+    <table><tr><th>Model</th><th>Input</th><th>Training</th><th>Output</th></tr>
+    <tr><td>gpt-9-finetune</td><td>$1</td><td>$3</td><td>$2</td></tr></table>
+    </div></div>
+    """
+    models = parse_official_openai_pricing_html(html)["models"]
+    assert models == {
+        "gpt-9-codex": {"input": 2.0, "cacheRead": 0.0, "output": 4.0},
+        "gpt-9-codex-fast": {"input": 3.0, "cacheRead": 0.3, "output": 6.0},
+    }
+    assert "gpt-9-flex" not in models
+    assert "gpt-9-finetune" not in models
+
+
+def test_standard_specialized_embedding_rates_are_input_only() -> None:
+    html = """<div id="content-switcher-specialized-pricing"><div data-value="standard">
+    <table><tr><th>Category</th><th>Model</th><th>Input</th>
+    <th>Cached input</th><th>Output</th></tr>
+    <tr><td>Codex</td><td>gpt-5.3-codex</td><td>$1.75</td><td>$0.175</td><td>$14</td></tr>
+    <tr><td>Embedding</td><td>text-embedding-3-small</td><td>$0.02</td><td>-</td><td>-</td></tr>
+    <tr><td>Embedding</td><td>text-embedding-3-large</td><td>$0.13</td><td>-</td><td>-</td></tr>
+    <tr><td>Embedding</td><td>text-embedding-ada-002</td><td>$0.10</td><td>-</td><td>-</td></tr>
+    <tr><td>Moderation</td><td>free-model</td><td>Free</td><td>-</td><td>-</td></tr>
+    </table></div><div data-value="fast"><table>
+    <tr><th>Category</th><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th></tr>
+    <tr><td>Codex</td><td>gpt-5.3-codex</td><td>$3.50</td><td>$0.35</td><td>$28</td></tr>
+    <tr><td>Embedding</td><td>not-fast</td><td>$0.01</td><td>-</td><td>-</td></tr>
+    </table></div></div>"""
+    models = parse_official_openai_pricing_html(html)["models"]
+    assert models == {
+        **{model: {"input": rate, "cacheRead": 0.0, "output": 0.0}
+        for model, rate in {"text-embedding-3-small": 0.02, "text-embedding-3-large": 0.13,
+                            "text-embedding-ada-002": 0.10}.items()},
+        "gpt-5.3-codex": {"input": 1.75, "cacheRead": 0.175, "output": 14.0},
+        "gpt-5.3-codex-fast": {"input": 3.5, "cacheRead": 0.35, "output": 28.0},
+    }
+
+
+def test_specialized_duplicate_preserves_document_order_across_panes() -> None:
+    html = """<div id="content-switcher-latest-pricing"><div data-value="standard">
+    <table><tr><th>Model</th><th>Input</th><th>Output</th></tr>
+    <tr><td>unrelated</td><td>$1</td><td>$2</td></tr></table>
+    </div></div>
+    <table><tr><th>Category</th><th>Model</th><th>Input</th><th>Output</th></tr>
+    <tr><td>Standard</td><td>duplicate</td><td>$3</td><td>$4</td></tr></table>
+    <div id="content-switcher-latest-pricing"><div data-value="standard">
+    <table><tr><th>Model</th><th>Input</th><th>Output</th></tr>
+    <tr><td>duplicate</td><td>$5</td><td>$6</td></tr></table>
+    </div></div>"""
+    assert parse_official_openai_pricing_html(html)["models"]["duplicate"] == {
+        "input": 3.0, "output": 4.0,
+    }
+
+
+@pytest.mark.parametrize("input_rate,output_rate,cache_rate", [
+    ("invalid", "$2", "-"), ("$1", "nan", "-"),
+    ("-1", "$2", "-"), ("$1", "-2", "-"),
+    ("$1", "$2", "-inf"), ("$1", "$2", "-1"),
+])
+def test_specialized_tables_skip_invalid_rates(input_rate, output_rate, cache_rate) -> None:
+    html = f"""<table><tr><th>Category</th><th>Model</th><th>Input</th>
+    <th>Cached input</th><th>Output</th></tr><tr><td>Standard</td>
+    <td>invalid-model</td><td>{input_rate}</td><td>{cache_rate}</td>
+    <td>{output_rate}</td></tr><tr><td>Standard</td><td>valid-model</td>
+    <td>$1</td><td>-</td><td>$2</td></tr></table>"""
+    models = parse_official_openai_pricing_html(html)["models"]
+    assert models == {"valid-model": {"input": 1.0, "cacheRead": 0.0, "output": 2.0}}
+
+
+def test_long_tier_presence_ignores_cache_dashes_and_keeps_explicit_threshold() -> None:
+    html = """<div id="content-switcher-latest-pricing"><div data-value="standard"><table>
+    <tr><th></th><th>Short context</th><th>Long context 1M</th></tr>
+    <tr><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th><th>Input</th><th>Cached input</th><th>Output</th></tr>
+    <tr><td>qualified (1M context length)</td><td>$1</td><td>-</td><td>$2</td><td>$3</td><td>-</td><td>$4</td></tr>
+    </table></div></div>"""
+    rates = parse_official_openai_pricing_html(html)["models"]["qualified"]
+    assert rates["contextOver200k"] == {
+        "threshold": 1_000_000, "input": 3.0, "cacheRead": 0.0,
+        "cacheWrite": 0.0, "output": 4.0,
+    }
+    tier = _parse_context_pricing(rates["contextOver200k"])
+    pricing = ModelPricing(input=1, output=2, cache_read=0, cache_write=0, context_over_200k=tier)
+    assert _select_pricing_rate(pricing, 1_000_000).input == 1.0
+    assert _select_pricing_rate(pricing, 1_000_001).input == 3.0
+
+
+def test_grouped_context_cache_columns_do_not_cross_contexts() -> None:
+    html = """<div id="content-switcher-latest-pricing"><div data-value="standard"><table>
+    <tr><th></th><th>Short context</th><th>Long context 1M</th></tr>
+    <tr><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th><th>Input</th><th>Cached input</th><th>Output</th></tr>
+    <tr><td>grouped</td><td>$1</td><td>$0.1</td><td>$2</td><td>$3</td><td>$0.3</td><td>$4</td></tr>
+    </table></div></div>"""
+    assert parse_official_openai_pricing_html(html)["models"]["grouped"] == {
+        "input": 1.0, "cacheRead": 0.1, "cacheWrite": 0.0, "output": 2.0,
+        "contextOver200k": {
+            "threshold": 1_000_000, "input": 3.0, "cacheRead": 0.3,
+            "cacheWrite": 0.0, "output": 4.0,
+        },
+    }
+
+
 class _StubPricingClient:
     def __init__(self, **kwargs: object) -> None:
         self.kwargs = kwargs
@@ -418,8 +572,17 @@ def test_cli_pricing_refresh_preview_and_write(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "OpencodeApiClient", CapturingStub)
     ledger_path = _write_ledger_file(
-        tmp_path, "current.json", _ledger([_record("gpt-9", "standard", 5.0, 5.0)])
+        tmp_path, "current.json", _ledger([_record("gpt-9", "standard", 5.0, 5.0), _record("catalog-only", "standard", 0.5, 1.0)])
     )
+    current = json.loads(Path(ledger_path).read_text(encoding="utf-8"))
+    current["records"][0]["source"]["kind"] = "provider_official"
+    current["records"][1]["source"] = {
+        "url": "https://raw.githubusercontent.com/anomalyco/models.dev/revision/api.json",
+        "retrieved_at": "2026-09-18T00:00:00Z",
+        "kind": "models.dev",
+        "revision": "0123456789abcdef0123456789abcdef01234567",
+    }
+    Path(ledger_path).write_text(json.dumps(current), encoding="utf-8")
     target = tmp_path / "target.json"
     args = ["pricing", "refresh", "--effective-from", "2026-10-02", "--ledger", ledger_path, "--target", str(target)]
 
@@ -455,7 +618,63 @@ def test_cli_pricing_refresh_preview_and_write(tmp_path, monkeypatch) -> None:
         and r["rates"]["input"] == 2.0
         for r in merged["records"]
     )
+    refreshed = next(
+        r for r in merged["records"]
+        if r["model"] == "gpt-9" and r["effective_from"] == "2026-10-02T00:00:00Z"
+    )
+    assert refreshed["source"]["url"] == "https://platform.openai.com/docs/pricing"
+    assert refreshed["source"]["retrieved_at"]
+    assert refreshed["rates"]["contextOver200k"]["input"] == 2.0
+    assert any(r["model"] == "catalog-only" and r["source"]["kind"] == "models.dev" for r in merged["records"])
     _parse_pricing_history(merged)
+
+
+def test_cli_pricing_refresh_defaults_effective_from_to_retrieval_time(tmp_path, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(*cls.current, tzinfo=UTC)
+
+    monkeypatch.setattr(cli, "datetime", FrozenDateTime)
+
+    class DelayedClient(_StubPricingClient):
+        def get_text(self, path: str, params: dict | None = None) -> str:
+            FrozenDateTime.current = (2026, 10, 2, 3, 5, 6)
+            return super().get_text(path, params)
+
+    FrozenDateTime.current = (2026, 10, 2, 3, 4, 5)
+    monkeypatch.setattr(cli, "OpencodeApiClient", DelayedClient)
+    target = tmp_path / "target.json"
+    result = CliRunner().invoke(
+        cli.main, ["pricing", "refresh", "--ledger", _write_ledger_file(tmp_path, "empty.json", _ledger([])), "--target", str(target), "--yes"]
+    )
+    assert result.exit_code == 0, result.output
+    records = json.loads(target.read_text(encoding="utf-8"))["records"]
+    assert records
+    assert all(r["effective_from"] == r["source"]["retrieved_at"] == "2026-10-02T03:05:06Z" for r in records)
+
+
+def test_cli_pricing_refresh_explicit_effective_from_overrides_retrieval_time(tmp_path, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 2, 3, 4, 5, tzinfo=UTC)
+
+    monkeypatch.setattr(cli, "datetime", FrozenDateTime)
+    monkeypatch.setattr(cli, "OpencodeApiClient", _StubPricingClient)
+    target = tmp_path / "target.json"
+    ledger = _write_ledger_file(tmp_path, "empty.json", _ledger([]))
+    result = CliRunner().invoke(
+        cli.main, ["pricing", "refresh", "--effective-from", "2026-10-01", "--ledger", ledger, "--target", str(target), "--yes"]
+    )
+    assert result.exit_code == 0, result.output
+    records = json.loads(target.read_text(encoding="utf-8"))["records"]
+    assert all(r["effective_from"] == "2026-10-01T00:00:00Z" for r in records)
+    assert all(r["source"]["retrieved_at"] == "2026-10-02T03:04:05Z" for r in records)
 
 
 class _FailingPricingClient:

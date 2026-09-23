@@ -60,7 +60,7 @@ def test_openai_terra_catalog_parity_keeps_official_override() -> None:
         record for record in load_pricing_ledger().get("records", [])
         if record["model"] == "gpt-5.6-terra" and record.get("source", {}).get("kind") == "provider_official"
     )
-    assert official["source"]["url"] == "https://openai.com/api/pricing/"
+    assert official["source"]["url"] == "https://developers.openai.com/api/docs/pricing"
 
 
 def test_fetch_requires_source_head_sha(monkeypatch: pytest.MonkeyPatch) -> None:

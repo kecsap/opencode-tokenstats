@@ -6,68 +6,165 @@
       "provider": "openai",
       "billing_channel": "direct_api",
       "model": "gpt-5.6-terra",
-      "aliases": ["gpt-5.6-terra", "openai/gpt-5.6-terra"],
+      "aliases": [
+        "gpt-5.6-terra",
+        "openai/gpt-5.6-terra"
+      ],
       "service_profile": "standard",
-      "profiles": ["standard"],
+      "profiles": [
+        "standard"
+      ],
       "context": "short",
       "effective_from": "2026-09-18T00:00:00Z",
-      "effective_to": null,
-      "status": "active",
+      "effective_to": "2026-09-23T14:43:46Z",
+      "status": "retired",
       "confidence": "observed/inferred",
-      "source_revision": "openai-pricing-2026-09-18",
+      "source_revision": "openai-pricing-2026-09-23",
       "observed_at": "2026-09-18T00:00:00Z",
       "source": {
-        "url": "https://openai.com/api/pricing/",
-        "retrieved_at": "2026-09-18T00:00:00Z",
+        "url": "https://developers.openai.com/api/docs/pricing",
+        "retrieved_at": "2026-09-23T00:00:00Z",
         "kind": "provider_official",
-        "revision": "openai-pricing-2026-09-18"
+        "revision": "openai-pricing-2026-09-23"
       },
-      "rates": {"input": 2.0, "output": 0.2, "reasoning": 0.2, "cacheRead": 2.5, "cacheWrite": 12.0, "tiers": []}
+      "rates": {
+        "input": 2.0,
+        "output": 12.0,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5,
+        "tiers": []
+      }
     },
     {
       "provider": "openai",
       "billing_channel": "direct_api",
       "model": "gpt-5.6-terra-fast",
-      "aliases": ["gpt-5.6-terra-fast", "openai/gpt-5.6-terra-fast"],
+      "aliases": [
+        "gpt-5.6-terra-fast",
+        "openai/gpt-5.6-terra-fast"
+      ],
       "service_profile": "fast",
-      "profiles": ["fast"],
+      "profiles": [
+        "fast"
+      ],
       "context": "short",
       "effective_from": "2026-09-18T00:00:00Z",
-      "effective_to": null,
-      "status": "active",
+      "effective_to": "2026-09-23T14:43:46Z",
+      "status": "retired",
       "confidence": "observed/inferred",
-      "source_revision": "openai-pricing-2026-09-18",
+      "source_revision": "openai-pricing-2026-09-23",
       "observed_at": "2026-09-18T00:00:00Z",
       "source": {
-        "url": "https://openai.com/api/pricing/",
-        "retrieved_at": "2026-09-18T00:00:00Z",
+        "url": "https://developers.openai.com/api/docs/pricing",
+        "retrieved_at": "2026-09-23T00:00:00Z",
         "kind": "provider_official",
-        "revision": "openai-pricing-2026-09-18"
+        "revision": "openai-pricing-2026-09-23"
       },
-      "rates": {"input": 4.0, "output": 0.4, "reasoning": 0.4, "cacheRead": 5.0, "cacheWrite": 24.0, "tiers": []}
+      "rates": {
+        "input": 4.0,
+        "output": 24.0,
+        "cacheRead": 0.4,
+        "cacheWrite": 5.0,
+        "tiers": []
+      }
     },
     {
       "provider": "openai",
       "billing_channel": "direct_api",
       "model": "gpt-5.6-luna-fast",
-      "aliases": ["gpt-5.6-luna-fast", "openai/gpt-5.6-luna-fast"],
+      "aliases": [
+        "gpt-5.6-luna-fast",
+        "openai/gpt-5.6-luna-fast"
+      ],
       "service_profile": "fast",
-      "profiles": ["fast"],
+      "profiles": [
+        "fast"
+      ],
       "context": "short",
       "effective_from": "2026-09-18T00:00:00Z",
-      "effective_to": null,
-      "status": "active",
+      "effective_to": "2026-09-23T14:43:46Z",
+      "status": "retired",
       "confidence": "observed/inferred",
-      "source_revision": "openai-pricing-2026-09-18",
+      "source_revision": "openai-pricing-2026-09-23",
       "observed_at": "2026-09-18T00:00:00Z",
       "source": {
-        "url": "https://openai.com/api/pricing/",
-        "retrieved_at": "2026-09-18T00:00:00Z",
+        "url": "https://developers.openai.com/api/docs/pricing",
+        "retrieved_at": "2026-09-23T00:00:00Z",
         "kind": "provider_official",
-        "revision": "openai-pricing-2026-09-18"
+        "revision": "openai-pricing-2026-09-23"
       },
-      "rates": {"input": 0.4, "output": 0.04, "reasoning": 0.04, "cacheRead": 0.5, "cacheWrite": 2.4, "tiers": []}
+      "rates": {
+        "input": 0.4,
+        "output": 2.4,
+        "cacheRead": 0.04,
+        "cacheWrite": 0.5,
+        "tiers": []
+      }
     },
+    {"provider":"openai","model":"gpt-5.6-terra","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":2,"cacheRead":0.2,"cacheWrite":2.5,"output":12,"contextOver200k":{"input":4,"cacheRead":0.4,"cacheWrite":5,"output":18}}},
+    {"provider":"openai","model":"gpt-5.6-terra-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":4,"cacheRead":0.4,"cacheWrite":5,"output":24,"contextOver200k":{"input":8,"cacheRead":0.8,"cacheWrite":10,"output":36}}},
+    {"provider":"openai","model":"gpt-5.6-luna-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.4,"cacheRead":0.04,"cacheWrite":0.5,"output":2.4,"contextOver200k":{"input":0.8,"cacheRead":0.08,"cacheWrite":1,"output":3.6}}},
+    {"provider":"openai","model":"gpt-5.6-sol","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":4,"cacheRead":0.4,"cacheWrite":5,"output":20,"contextOver200k":{"input":8,"cacheRead":0.8,"cacheWrite":10,"output":30}}},
+    {"provider":"openai","model":"gpt-5.6-luna","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.2,"cacheRead":0.02,"cacheWrite":0.25,"output":1.2,"contextOver200k":{"input":0.4,"cacheRead":0.04,"cacheWrite":0.5,"output":1.8}}},
+    {"provider":"openai","model":"gpt-5.5","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":5,"cacheRead":0.5,"cacheWrite":0,"output":30,"contextOver200k":{"input":10,"cacheRead":1,"cacheWrite":0,"output":45,"threshold":272000}}},
+    {"provider":"openai","model":"gpt-5.5-pro","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":30,"cacheRead":0,"cacheWrite":0,"output":180,"contextOver200k":{"input":60,"cacheRead":0,"cacheWrite":0,"output":270,"threshold":272000}}},
+    {"provider":"openai","model":"gpt-5.4","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":2.5,"cacheRead":0.25,"cacheWrite":0,"output":15,"contextOver200k":{"input":5,"cacheRead":0.5,"cacheWrite":0,"output":22.5,"threshold":272000}}},
+    {"provider":"openai","model":"gpt-5.4-mini","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.75,"cacheRead":0.075,"cacheWrite":0,"output":4.5}},
+    {"provider":"openai","model":"gpt-5.4-nano","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.2,"cacheRead":0.02,"cacheWrite":0,"output":1.25}},
+    {"provider":"openai","model":"gpt-5.4-pro","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":30,"cacheRead":0,"cacheWrite":0,"output":180,"contextOver200k":{"input":60,"cacheRead":0,"cacheWrite":0,"output":270,"threshold":272000}}},
+    {"provider":"openai","model":"gpt-5.2","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":1.75,"cacheRead":0.175,"cacheWrite":0,"output":14}},
+    {"provider":"openai","model":"gpt-5.2-pro","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":21,"cacheRead":0,"cacheWrite":0,"output":168}},
+    {"provider":"openai","model":"gpt-5.1","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":1.25,"cacheRead":0.125,"cacheWrite":0,"output":10}},
+    {"provider":"openai","model":"gpt-5","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":1.25,"cacheRead":0.125,"cacheWrite":0,"output":10}},
+    {"provider":"openai","model":"gpt-5-mini","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.25,"cacheRead":0.025,"cacheWrite":0,"output":2}},
+    {"provider":"openai","model":"gpt-5-nano","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.05,"cacheRead":0.005,"cacheWrite":0,"output":0.4}},
+    {"provider":"openai","model":"gpt-5-pro","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":15,"cacheRead":0,"cacheWrite":0,"output":120}},
+    {"provider":"openai","model":"gpt-4.1","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":2,"cacheRead":0.5,"cacheWrite":0,"output":8}},
+    {"provider":"openai","model":"gpt-4.1-mini","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.4,"cacheRead":0.1,"cacheWrite":0,"output":1.6}},
+    {"provider":"openai","model":"gpt-4.1-nano","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.1,"cacheRead":0.025,"cacheWrite":0,"output":0.4}},
+    {"provider":"openai","model":"gpt-4o","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":2.5,"cacheRead":1.25,"cacheWrite":0,"output":10}},
+    {"provider":"openai","model":"gpt-4o-2024-05-13","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":5,"cacheRead":0,"cacheWrite":0,"output":15}},
+    {"provider":"openai","model":"gpt-4o-mini","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.15,"cacheRead":0.075,"cacheWrite":0,"output":0.6}},
+    {"provider":"openai","model":"o1","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":15,"cacheRead":7.5,"cacheWrite":0,"output":60}},
+    {"provider":"openai","model":"o1-pro","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":150,"cacheRead":0,"cacheWrite":0,"output":600}},
+    {"provider":"openai","model":"o3-pro","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":20,"cacheRead":0,"cacheWrite":0,"output":80}},
+    {"provider":"openai","model":"o3","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":2,"cacheRead":0.5,"cacheWrite":0,"output":8}},
+    {"provider":"openai","model":"o4-mini","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":1.1,"cacheRead":0.275,"cacheWrite":0,"output":4.4}},
+    {"provider":"openai","model":"o3-mini","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":1.1,"cacheRead":0.55,"cacheWrite":0,"output":4.4}},
+    {"provider":"openai","model":"gpt-4-turbo-2024-04-09","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":10,"cacheRead":0,"cacheWrite":0,"output":30}},
+    {"provider":"openai","model":"gpt-4-0613","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":30,"cacheRead":0,"cacheWrite":0,"output":60}},
+    {"provider":"openai","model":"gpt-3.5-turbo","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.5,"cacheRead":0,"cacheWrite":0,"output":1.5}},
+    {"provider":"openai","model":"gpt-3.5-turbo-0125","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.5,"cacheRead":0,"cacheWrite":0,"output":1.5}},
+    {"provider":"openai","model":"gpt-3.5-turbo-1106","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":1,"cacheRead":0,"cacheWrite":0,"output":2}},
+    {"provider":"openai","model":"gpt-3.5-turbo-instruct","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":1.5,"cacheRead":0,"cacheWrite":0,"output":2}},
+    {"provider":"openai","model":"davinci-002","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":2,"cacheRead":0,"cacheWrite":0,"output":2}},
+    {"provider":"openai","model":"babbage-002","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.4,"cacheRead":0,"cacheWrite":0,"output":0.4}},
+    {"provider":"openai","model":"gpt-5.6-cyber","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":12.5,"cacheRead":1.25,"cacheWrite":15.625,"output":75}},
+    {"provider":"openai","model":"gpt-5.5-cyber","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":12.5,"cacheRead":1.25,"cacheWrite":0,"output":75}},
+    {"provider":"openai","model":"chat-latest","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":5,"cacheRead":0.5,"cacheWrite":0,"output":30}},
+    {"provider":"openai","model":"gpt-5.3-codex","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":1.75,"cacheRead":0.175,"cacheWrite":0,"output":14}},
+    {"provider":"openai","model":"gpt-rosalind-research","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-10-05T00:00:00Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":5,"cacheRead":0.5,"cacheWrite":0,"output":25}},
+    {"provider":"openai","model":"gpt-5-search-api","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":1.25,"cacheRead":0.125,"cacheWrite":0,"output":10}},
+    {"provider":"openai","model":"text-embedding-3-small","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.02,"cacheRead":0,"cacheWrite":0,"output":0}},
+    {"provider":"openai","model":"text-embedding-3-large","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.13,"cacheRead":0,"cacheWrite":0,"output":0}},
+    {"provider":"openai","model":"text-embedding-ada-002","service_profile":"standard","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.10,"cacheRead":0,"cacheWrite":0,"output":0}},
+    {"provider":"openai","model":"gpt-5.6-sol-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":8,"cacheRead":0.8,"cacheWrite":10,"output":40,"contextOver200k":{"input":16,"cacheRead":1.6,"cacheWrite":20,"output":60}}},
+    {"provider":"openai","model":"gpt-5.5-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":12.5,"cacheRead":1.25,"cacheWrite":0,"output":75}},
+    {"provider":"openai","model":"gpt-5.4-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":5,"cacheRead":0.5,"cacheWrite":0,"output":30}},
+    {"provider":"openai","model":"gpt-5.4-mini-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":1.5,"cacheRead":0.15,"cacheWrite":0,"output":9}},
+    {"provider":"openai","model":"gpt-5.2-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":3.5,"cacheRead":0.35,"cacheWrite":0,"output":28}},
+    {"provider":"openai","model":"gpt-5.1-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":2.5,"cacheRead":0.25,"cacheWrite":0,"output":20}},
+    {"provider":"openai","model":"gpt-5-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":2.5,"cacheRead":0.25,"cacheWrite":0,"output":20}},
+    {"provider":"openai","model":"gpt-5-mini-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.45,"cacheRead":0.045,"cacheWrite":0,"output":3.6}},
+    {"provider":"openai","model":"gpt-4.1-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":3.5,"cacheRead":0.875,"cacheWrite":0,"output":14}},
+    {"provider":"openai","model":"gpt-4.1-mini-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.7,"cacheRead":0.175,"cacheWrite":0,"output":2.8}},
+    {"provider":"openai","model":"gpt-4.1-nano-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.2,"cacheRead":0.05,"cacheWrite":0,"output":0.8}},
+    {"provider":"openai","model":"gpt-4o-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":4.25,"cacheRead":2.125,"cacheWrite":0,"output":17}},
+    {"provider":"openai","model":"gpt-4o-2024-05-13-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":8.75,"cacheRead":0,"cacheWrite":0,"output":26.25}},
+    {"provider":"openai","model":"gpt-4o-mini-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":0.25,"cacheRead":0.125,"cacheWrite":0,"output":1}},
+    {"provider":"openai","model":"o3-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":3.5,"cacheRead":0.875,"cacheWrite":0,"output":14}},
+    {"provider":"openai","model":"o4-mini-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":2,"cacheRead":0.5,"cacheWrite":0,"output":8}},
+    {"provider":"openai","model":"gpt-5.3-codex-fast","service_profile":"fast","context":"short","status":"active","confidence":"observed","effective_from":"2026-09-23T14:43:46Z","effective_to":null,"source":{"url":"https://developers.openai.com/api/docs/pricing","retrieved_at":"2026-09-23T14:43:46Z","kind":"provider_official"},"rates":{"input":3.5,"cacheRead":0.35,"cacheWrite":0,"output":28}},
     {
       "provider": "302ai",
       "billing_channel": "direct_api",
@@ -259236,6 +259333,192 @@
         "cacheRead": 0.0,
         "cacheWrite": 0.0,
         "tiers": []
+      }
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "aliases": [
+        "gpt-6-astra",
+        "openai/gpt-6-astra"
+      ],
+      "service_profile": "standard",
+      "context": "short",
+      "effective_from": "2026-09-23T12:45:33Z",
+      "effective_to": null,
+      "status": "active",
+      "confidence": "observed",
+      "source": {
+        "url": "https://developers.openai.com/api/docs/pricing",
+        "retrieved_at": "2026-09-23T12:45:33Z",
+        "kind": "provider_official"
+      },
+      "rates": {
+        "input": 10.0,
+        "output": 50.0,
+        "cacheRead": 1.0,
+        "cacheWrite": 12.5,
+        "contextOver200k": {
+          "input": 20.0,
+          "cacheRead": 2.0,
+          "cacheWrite": 25.0,
+          "output": 75.0
+        }
+      }
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-sol",
+      "aliases": [
+        "gpt-6-sol",
+        "openai/gpt-6-sol"
+      ],
+      "service_profile": "standard",
+      "context": "short",
+      "effective_from": "2026-09-23T12:45:33Z",
+      "effective_to": null,
+      "status": "active",
+      "confidence": "observed",
+      "source": {
+        "url": "https://developers.openai.com/api/docs/pricing",
+        "retrieved_at": "2026-09-23T12:45:33Z",
+        "kind": "provider_official"
+      },
+      "rates": {
+        "input": 2.0,
+        "output": 10.0,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5,
+        "contextOver200k": {
+          "input": 4.0,
+          "cacheRead": 0.4,
+          "cacheWrite": 5.0,
+          "output": 15.0
+        }
+      }
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-luna",
+      "aliases": [
+        "gpt-6-luna",
+        "openai/gpt-6-luna"
+      ],
+      "service_profile": "standard",
+      "context": "short",
+      "effective_from": "2026-09-23T12:45:33Z",
+      "effective_to": null,
+      "status": "active",
+      "confidence": "observed",
+      "source": {
+        "url": "https://developers.openai.com/api/docs/pricing",
+        "retrieved_at": "2026-09-23T12:45:33Z",
+        "kind": "provider_official"
+      },
+      "rates": {
+        "input": 0.1,
+        "output": 0.5,
+        "cacheRead": 0.01,
+        "cacheWrite": 0.125,
+        "contextOver200k": {
+          "input": 0.2,
+          "cacheRead": 0.02,
+          "cacheWrite": 0.25,
+          "output": 0.75
+        }
+      }
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra-fast",
+      "aliases": [
+        "gpt-6-astra-fast",
+        "openai/gpt-6-astra-fast"
+      ],
+      "service_profile": "fast",
+      "context": "short",
+      "effective_from": "2026-09-23T12:45:33Z",
+      "effective_to": null,
+      "status": "active",
+      "confidence": "observed",
+      "source": {
+        "url": "https://developers.openai.com/api/docs/pricing",
+        "retrieved_at": "2026-09-23T12:45:33Z",
+        "kind": "provider_official"
+      },
+      "rates": {
+        "input": 20.0,
+        "output": 100.0,
+        "cacheRead": 2.0,
+        "cacheWrite": 25.0,
+        "contextOver200k": {
+          "input": 40.0,
+          "cacheRead": 4.0,
+          "cacheWrite": 50.0,
+          "output": 150.0
+        }
+      }
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-sol-fast",
+      "aliases": [
+        "gpt-6-sol-fast",
+        "openai/gpt-6-sol-fast"
+      ],
+      "service_profile": "fast",
+      "context": "short",
+      "effective_from": "2026-09-23T12:45:33Z",
+      "effective_to": null,
+      "status": "active",
+      "confidence": "observed",
+      "source": {
+        "url": "https://developers.openai.com/api/docs/pricing",
+        "retrieved_at": "2026-09-23T12:45:33Z",
+        "kind": "provider_official"
+      },
+      "rates": {
+        "input": 4.0,
+        "output": 20.0,
+        "cacheRead": 0.4,
+        "cacheWrite": 5.0,
+        "contextOver200k": {
+          "input": 8.0,
+          "cacheRead": 0.8,
+          "cacheWrite": 10.0,
+          "output": 30.0
+        }
+      }
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-luna-fast",
+      "aliases": [
+        "gpt-6-luna-fast",
+        "openai/gpt-6-luna-fast"
+      ],
+      "service_profile": "fast",
+      "context": "short",
+      "effective_from": "2026-09-23T12:45:33Z",
+      "effective_to": null,
+      "status": "active",
+      "confidence": "observed",
+      "source": {
+        "url": "https://developers.openai.com/api/docs/pricing",
+        "retrieved_at": "2026-09-23T12:45:33Z",
+        "kind": "provider_official"
+      },
+      "rates": {
+        "input": 0.2,
+        "output": 1.0,
+        "cacheRead": 0.02,
+        "cacheWrite": 0.25,
+        "contextOver200k": {
+          "input": 0.4,
+          "cacheRead": 0.04,
+          "cacheWrite": 0.5,
+          "output": 1.5
+        }
       }
     }
   ]

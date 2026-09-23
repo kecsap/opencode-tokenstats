@@ -366,7 +366,7 @@ def pricing_import(source: str, ledger: str | None, target: str, yes: bool) -> N
     show_default=True,
     help="Official OpenAI pricing source URL (https on openai.com or *.openai.com only)",
 )
-@click.option("--effective-from", default=None, help="Effective date (YYYY-MM-DD or ISO datetime, UTC); default: today UTC")
+@click.option("--effective-from", default=None, help="Effective date (YYYY-MM-DD or ISO datetime, UTC); default: exact post-response retrieval time")
 @click.option("--ledger", default=None, help="Current ledger to merge into (default: bundled data/pricing-history.json)")
 @click.option("--target", required=True, type=click.Path(dir_okay=False), help="Explicit ledger path to write")
 @click.option("--yes", is_flag=True, help="Write the merged ledger to --target (preview only without it)")
@@ -381,9 +381,7 @@ def pricing_refresh(
 ) -> None:
     """Fetch official OpenAI pricing and propose dated Standard/Fast ledger records."""
     options = ctx.obj
-    now = datetime.now(UTC)
-    effective = normalize_pricing_date(effective_from or now.strftime("%Y-%m-%d"))
-    retrieved = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+    effective_override = normalize_pricing_date(effective_from) if effective_from else None
     parts = urlsplit(source_url)
     host = (parts.hostname or "").lower()
     if parts.scheme != "https" or not (host == "openai.com" or host.endswith(".openai.com")):
@@ -403,6 +401,9 @@ def pricing_refresh(
         raise click.ClickException(f"refresh fetch failed; ledger unchanged: {exc}") from exc
     finally:
         client.close()
+    now = datetime.now(UTC)
+    retrieved = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+    effective = effective_override or retrieved
     try:
         payload = parse_official_openai_pricing_html(page)
         records = parse_official_openai_pricing(

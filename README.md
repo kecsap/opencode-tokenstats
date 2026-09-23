@@ -259,7 +259,7 @@ octoken pricing backfill models-dev-history.json --target my-ledger.json --yes
 - `import`, `refresh`, and `backfill` are preview-only unless you pass `--yes`; writes always go to the explicit `--target` path, never to the bundled ledger. `snapshot` also previews unless `--yes` is passed.
 - `snapshot` fetches the current models.dev catalog, records its URL, retrieval time, catalog revision, and `source.kind: "models.dev"`, then validates the complete schema before writing. It describes current catalog observations, not historical prices.
 - A failed fetch or validation leaves the ledger unchanged.
-- `refresh` only accepts official OpenAI https URLs (`openai.com` or `*.openai.com`); no third-party scrapers are supported. `--effective-from` (default: today UTC) stamps the proposed records.
+- `refresh` only accepts official OpenAI https URLs (`openai.com` or `*.openai.com`); no third-party scrapers are supported. It parses Standard and Fast model-token tables, including input-only embedding token rates in Specialized tables. Batch, Flex, modality-specific, fine-tuning, and tool pricing are excluded. `-` cache cells are recorded as `0.0`; embedding output `-` means no billable output tokens and is recorded as `0.0`. Other missing output prices are rejected. `--effective-from` overrides the default retrieval timestamp; otherwise proposed records use exact retrieval time.
 - `backfill` requires a JSON list (or `{"revisions": [...]}`) of `{ "revision": "<40-char SHA>", "effective_from": "YYYY-MM-DD" }` entries. It is preview-only without `--yes`, and each catalog is fetched at its pinned revision.
 
 ### Merge rules
@@ -285,15 +285,14 @@ octoken pricing backfill models-dev-history.json --target my-ledger.json --yes
       "service_profile": "standard",
       "context": "short",
       "effective_from": "2026-09-18T00:00:00Z",
-      "effective_to": null,
-      "status": "active",
+      "effective_to": "2026-09-23T14:43:46Z",
+      "status": "retired",
       "confidence": "observed/inferred",
       "billing_channel": "direct_api",
-      "source_kind": "official",
-      "source_revision": "",
+      "source_revision": "openai-pricing-2026-09-23",
       "observed_at": "2026-09-18T00:00:00Z",
-      "source": {"url": "https://openai.com/api/pricing/", "retrieved_at": "2026-09-18T00:00:00Z", "kind": "official", "revision": ""},
-      "rates": {"input": 2.0, "output": 0.2, "cacheRead": 2.5, "cacheWrite": 12.0}
+      "source": {"url": "https://developers.openai.com/api/docs/pricing", "retrieved_at": "2026-09-23T00:00:00Z", "kind": "provider_official", "revision": "openai-pricing-2026-09-23"},
+      "rates": {"input": 2.0, "output": 12.0, "cacheRead": 0.2, "cacheWrite": 2.5}
     }
   ]
 }
@@ -303,6 +302,8 @@ octoken pricing backfill models-dev-history.json --target my-ledger.json --yes
 - `aliases` are the exact model spellings a call can match (with and without the `provider/` prefix).
 - `source.url` and `source.retrieved_at` record where and when the rate was observed.
 - Optional rate fields: `webSearch`, `fastMultiplier`, `tiers`, `contextOver200k`.
+- The example is the corrected historical Terra record. Its current official observation starts at `2026-09-23T14:43:46Z` and adds `contextOver200k` with input `$4`, cached input `$0.40`, cache writes `$5`, and output `$18` per million tokens.
+- Long-context prices are stored as tiers and apply only when per-call context telemetry provides enough information; source thresholds are retained, with 200,000 tokens as the default when absent.
 - Intervals for one identity must not overlap or run backwards.
 
 ### How reports price calls

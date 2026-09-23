@@ -1205,6 +1205,7 @@ def parse_official_openai_pricing(
             "source": {
                 "url": source_url,
                 "retrieved_at": retrieved.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "kind": "provider_official",
             },
             "rates": rate_obj,
         })
@@ -1229,13 +1230,16 @@ class _OfficialPricingHTMLParser(HTMLParser):
         self._in_row = False
         self._cell_parts: list[str] | None = None
         self._row: list[str] = []
-        self.tables: dict[str, list[list[str]]] = {}
+        self.tables: list[tuple[str | None, list[list[list[str]]]]] = []
+        self._table: list[list[str]] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs = dict(attrs)
         if tag == "div":
             self._div_depth += 1
-            if self._section_div_depth is None and attrs.get("id") == "content-switcher-latest-pricing":
+            if self._section_div_depth is None and attrs.get("id") in (
+                "content-switcher-latest-pricing", "content-switcher-specialized-pricing"
+            ):
                 self._section_div_depth = self._div_depth
             elif (
                 self._section_div_depth is not None
@@ -1244,8 +1248,9 @@ class _OfficialPricingHTMLParser(HTMLParser):
             ):
                 self._pane_value = attrs["data-value"]
                 self._pane_div_depth = self._div_depth
-        elif tag == "table" and self._pane_value is not None:
+        elif tag == "table":
             self._in_table = True
+            self._table = []
         elif tag == "tr" and self._in_table:
             self._in_row = True
             self._row = []
@@ -1258,11 +1263,14 @@ class _OfficialPricingHTMLParser(HTMLParser):
             self._cell_parts = None
         elif tag == "tr" and self._in_row:
             self._in_row = False
-            if self._row and self._pane_value is not None:
-                self.tables.setdefault(self._pane_value, []).append(self._row)
+            if self._row and self._table is not None:
+                self._table.append(self._row)
             self._row = []
         elif tag == "table" and self._in_table:
             self._in_table = False
+            if self._table:
+                self.tables.append((self._pane_value, [self._table]))
+            self._table = None
         elif tag == "div":
             if self._pane_div_depth is not None and self._div_depth == self._pane_div_depth:
                 self._pane_value = None
@@ -1281,9 +1289,10 @@ def _parse_price_cell(value: str) -> float | None:
     if not text or text == "-":
         return None
     try:
-        return float(text)
+        price = float(text)
     except ValueError:
         return None
+    return price if isfinite(price) and price >= 0 else None
 
 
 def parse_official_openai_pricing_html(html: str) -> dict:
@@ -1298,31 +1307,89 @@ def parse_official_openai_pricing_html(html: str) -> dict:
     parser = _OfficialPricingHTMLParser()
     parser.feed(html)
     models: dict[str, dict[str, object]] = {}
-    for pane in ("standard", "fast"):
-        for row in parser.tables.get(pane, []):
-            if len(row) != 9 or not row[0] or row[0] == "Model":
+    for pane, pane_tables in parser.tables:
+        for table in pane_tables:
+            rows = [list(row) for row in table]
+            # Expand grouped column labels (Short/Long context) onto second header.
+            headers = [cell.strip().lower() for cell in rows[0]] if rows else []
+            context_headers = rows[0] if rows and any("context" in cell.lower() for cell in rows[0]) else []
+            if any(term in " ".join(headers) for term in ("batch", "flex", "training", "fine-tun", "audio", "image", "video", "minute")):
                 continue
-            model = row[0]
-            key = f"{model}-fast" if pane == "fast" else model
-            if key in models:
+            if len(rows) > 1 and any("context" in cell.lower() for cell in rows[0]):
+                rows.pop(0)
+            elif len(rows) > 1 and rows[0] and not any(cell.strip().lower() == "model" for cell in rows[0]):
                 continue
-            rates: dict[str, object] = {}
-            for field_name, value in zip(("input", "cacheRead", "cacheWrite", "output"), row[1:5]):
-                price = _parse_price_cell(value)
-                if price is None:
-                    raise ValueError(f"official pricing page has no short-context {field_name} rate for {model}")
-                rates[field_name] = price
-            long_rates = [_parse_price_cell(value) for value in row[5:9]]
-            if any(value is not None for value in long_rates):
-                if any(value is None for value in long_rates):
-                    raise ValueError(f"official pricing page has partial long-context rates for {model}")
-                rates["contextOver200k"] = {
-                    "input": long_rates[0],
-                    "cacheRead": long_rates[1],
-                    "cacheWrite": long_rates[2],
-                    "output": long_rates[3],
-                }
-            models[key] = rates
+            if not rows:
+                continue
+            headers = [cell.strip().lower() for cell in rows[0]]
+            category_col = next((i for i, h in enumerate(headers) if h == "category"), None)
+            model_col = next((i for i, h in enumerate(headers) if h == "model"), None)
+            input_cols = [i for i, h in enumerate(headers) if h == "input"]
+            output_cols = [i for i, h in enumerate(headers) if h == "output"]
+            cache_cols = [i for i, h in enumerate(headers) if "cached input" in h or "cache writes" in h]
+            if model_col is None or not input_cols or not output_cols:
+                continue
+            for row in rows[1:]:
+                if max([model_col, *input_cols, *output_cols, *cache_cols, *([category_col] if category_col is not None else [])]) >= len(row):
+                    continue
+                row_pane = pane
+                if category_col is not None:
+                    category = row[category_col].strip().lower()
+                    if category in ("standard", "fast"):
+                        row_pane = category
+                    elif not (
+                        (pane == "standard" and category in
+                         ("chatgpt", "codex", "life sciences", "search", "embedding"))
+                        or (pane == "fast" and category == "codex")
+                    ):
+                        continue
+                if row_pane not in ("standard", "fast"):
+                    continue
+                model = re.sub(r"\s*\([^)]*context length\)", "", row[model_col], flags=re.I).strip()
+                if not model:
+                    continue
+                key = f"{model}-fast" if row_pane == "fast" else model
+                if key in models:
+                    continue
+                rates: dict[str, object] = {}
+                short_input = _parse_price_cell(row[input_cols[0]])
+                short_output = _parse_price_cell(row[output_cols[0]])
+                if short_input is None or (short_output is None and not (category_col is not None and category == "embedding" and row[output_cols[0]].strip() == "-")):
+                    continue
+                rates.update(input=short_input, output=0.0 if short_output is None else short_output)
+                def context_cache(start: int, end: int) -> list[float] | None:
+                    values = []
+                    for col in (i for i in cache_cols if start < i < end):
+                        cache_text = row[col].strip()
+                        value = 0.0 if cache_text == "-" else _parse_price_cell(cache_text)
+                        if value is None:
+                            return None
+                        values.append(value)
+                    return values
+
+                cache_values = context_cache(input_cols[0], input_cols[1] if len(input_cols) > 1 else len(headers))
+                if cache_values is None:
+                    continue
+                rates.update(dict(zip(("cacheRead", "cacheWrite"), cache_values)))
+                if len(input_cols) > 1:
+                    rates.setdefault("cacheWrite", 0.0)
+                long_rates = []
+                if len(input_cols) > 1 and len(output_cols) > 1:
+                    long_rates = [_parse_price_cell(row[input_cols[1]]), _parse_price_cell(row[output_cols[1]])]
+                if len(long_rates) == 2 and all(value is not None for value in long_rates):
+                    long_cache = context_cache(input_cols[1], len(headers))
+                    if long_cache is not None:
+                        context = " ".join(context_headers)
+                        threshold_match = re.search(r"([\d,]+)\s*(k|million|m)\b", context, re.I)
+                        tier = {
+                            "input": long_rates[0], "cacheRead": long_cache[0] if long_cache else 0.0,
+                            "cacheWrite": long_cache[1] if len(long_cache) > 1 else 0.0, "output": long_rates[1],
+                        }
+                        if threshold_match:
+                            amount = int(threshold_match.group(1).replace(",", ""))
+                            tier["threshold"] = amount * (1_000_000 if threshold_match.group(2).lower() in ("m", "million") else 1000)
+                        rates["contextOver200k"] = tier
+                models[key] = rates
     if not models:
         raise ValueError("official pricing page has no model rate tables")
     return {"models": models}

@@ -35,16 +35,49 @@ def test_load_pricing_history_package_data() -> None:
         for record in lookup.history
         if record.model == "gpt-5.6-terra"
         and record.source_kind == "provider_official"
-        and record.source_url == "https://openai.com/api/pricing/"
+        and record.source_url == "https://developers.openai.com/api/docs/pricing"
     )
 
-    assert (terra.input, terra.output, terra.cache_read, terra.cache_write) == (2.0, 0.2, 2.5, 12.0)
-    assert (terra_fast.input, terra_fast.output, terra_fast.cache_read, terra_fast.cache_write) == (4.0, 0.4, 5.0, 24.0)
-    assert (luna_fast.input, luna_fast.output, luna_fast.cache_read, luna_fast.cache_write) == (0.4, 0.04, 0.5, 2.4)
+    assert (terra.input, terra.output, terra.cache_read, terra.cache_write) == (2.0, 12.0, 0.2, 2.5)
+    assert (terra_fast.input, terra_fast.output, terra_fast.cache_read, terra_fast.cache_write) == (4.0, 24.0, 0.4, 5.0)
+    assert (luna_fast.input, luna_fast.output, luna_fast.cache_read, luna_fast.cache_write) == (0.4, 2.4, 0.04, 0.5)
     assert official_terra.effective_from == "2026-09-18T00:00:00Z"
     assert official_terra.confidence == "observed/inferred"
     assert official_terra.billing_channel == "direct_api"
-    assert official_terra.source_revision == "openai-pricing-2026-09-18"
+    assert official_terra.source_revision == "openai-pricing-2026-09-23"
+
+
+def test_terra_estimate_uses_output_rate_for_unset_reasoning() -> None:
+    pricing = load_pricing_lookup().get_pricing("openai/gpt-5.6-terra")
+    assert pricing.reasoning is None
+
+    cost = estimate_session_cost_usd(
+        pricing,
+        input_tokens=100_000,
+        output_tokens=200_000,
+        reasoning_tokens=50_000,
+        cache_read_tokens=100_000,
+        cache_write_tokens=100_000,
+    )
+    assert cost == pytest.approx(3.47)
+
+
+def test_terra_tier_is_applied_only_above_threshold_after_observation() -> None:
+    lookup = load_pricing_lookup()
+    before = int(datetime.fromisoformat("2026-09-22T00:00:00+00:00").timestamp() * 1000)
+    after = int(datetime.fromisoformat("2026-09-24T00:00:00+00:00").timestamp() * 1000)
+    historical = lookup.resolve_call_pricing("openai/gpt-5.6-terra", before)
+    current = lookup.resolve_call_pricing("openai/gpt-5.6-terra", after)
+    assert historical.pricing is not None and historical.pricing.context_over_200k is None
+    assert current.pricing is not None
+    assert current.pricing.context_over_200k is not None
+    assert current.pricing.context_over_200k.threshold == 200_000
+    assert estimate_session_cost_usd(current.pricing, input_tokens=1_000_000,
+                                     output_tokens=1_000_000, reasoning_tokens=0,
+                                     cache_read_tokens=0, context_tokens=200_000) == pytest.approx(14)
+    assert estimate_session_cost_usd(current.pricing, input_tokens=1_000_000,
+                                     output_tokens=1_000_000, reasoning_tokens=0,
+                                     cache_read_tokens=0, context_tokens=200_001) == pytest.approx(22)
 
 
 def test_official_correction_supersedes_catalog_record() -> None:
@@ -1048,5 +1081,5 @@ def test_resolve_call_pricing_keeps_standard_and_fast_rates_separate() -> None:
     assert standard.pricing is not None and fast.pricing is not None
     assert standard.pricing.input == 2.0
     assert fast.pricing.input == 4.0
-    assert standard.pricing.output == 0.2
-    assert fast.pricing.output == 0.4
+    assert standard.pricing.output == 12.0
+    assert fast.pricing.output == 24.0
