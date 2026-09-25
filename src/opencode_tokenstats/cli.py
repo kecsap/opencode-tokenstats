@@ -27,7 +27,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from opencode_tokenstats.client import ApiClientError, OpencodeApiClient
     from opencode_tokenstats.activity_classifier import classify_session, CATEGORY_LABELS, extract_root_dir
-    from opencode_tokenstats.canonical_metrics import build_canonical_metrics
+    from opencode_tokenstats.canonical_metrics import apply_cross_session_skill_matching, build_canonical_metrics
+    from opencode_tokenstats.component_aliases import load_component_aliases
     from opencode_tokenstats.compatibility import analyze_context_compatibility
     from opencode_tokenstats.local_session_service import (
         MAX_LOCAL_QUERY_WORKERS,
@@ -63,7 +64,8 @@ if __package__ in {None, ""}:
 else:
     from .activity_classifier import classify_session, CATEGORY_LABELS, extract_root_dir
     from .client import ApiClientError, OpencodeApiClient
-    from .canonical_metrics import build_canonical_metrics
+    from .canonical_metrics import apply_cross_session_skill_matching, build_canonical_metrics
+    from .component_aliases import load_component_aliases
     from .compatibility import analyze_context_compatibility
     from .local_session_service import MAX_LOCAL_QUERY_WORKERS, LocalSessionService, LocalStorageError
     from .renderer import print_period_report, print_session_report, print_status_report
@@ -95,6 +97,7 @@ else:
 
 
 _FORK_PERIOD_METRIC_INPUTS: dict[str, tuple[dict[str, object], list[dict[str, object]]]] = {}
+_FORK_COMPONENT_ALIASES: dict[str, str] = {}
 LOCAL_QUERY_AUTO_THRESHOLD = 1800
 LOCAL_QUERY_AUTO_WORKERS = 4
 
@@ -157,6 +160,7 @@ class OrderedCommandsGroup(click.Group):
 @click.option("--db-path", default=None)
 @click.option("--no-warmup", is_flag=True, help="Disable automatic tokenizer warmup")
 @click.option("--model-alias-file", default=None, help="Path to models.conf alias file")
+@click.option("-caf", "--component-alias-file", default=None, help="Path to components.conf component alias file")
 @click.option("-sf", "--session-filter", default=None, help="Comma-separated list of project root dir names to filter sessions by")
 @click.option("-sm", "--model-filter", default=None, help="Comma-separated model IDs or aliases; use !name to exclude")
 @click.option("--loc-scope", type=click.Choice(["code", "all"]), default="code", show_default=True, help="Git LOC scope")
@@ -177,6 +181,7 @@ def main(
     db_path: str | None,
     no_warmup: bool,
     model_alias_file: str | None,
+    component_alias_file: str | None,
     session_filter: str | None,
     model_filter: str | None,
     loc_scope: str,
@@ -208,6 +213,7 @@ def main(
         "mode": mode,
         "db_path": db_path,
         "model_alias_file": model_alias_file,
+        "component_alias_file": component_alias_file,
         "no_warmup": no_warmup,
         "session_filter": session_filter_set,
         "model_filter": model_filter_set,
@@ -583,7 +589,12 @@ def session(ctx: click.Context, session_id: str | None) -> None:
     messages = _get_messages(options, sid)
     messages = _filter_messages_by_model(messages, options)
     session_info = _find_session_info(sessions, sid) or _get_session_info(options, sid)
-    canonical = build_canonical_metrics(sid, messages, session_info=session_info)
+    canonical = build_canonical_metrics(
+        sid,
+        messages,
+        session_info=session_info,
+        component_aliases=load_component_aliases(options.get("component_alias_file")),
+    )
     if options.get("model_filter"):
         click.echo("WARNING: model filter active; tool/component attribution is approximate at assistant-message level.")
     top_tools_limit = _max_ext_tools(options)
@@ -771,6 +782,14 @@ def json_cmd(ctx: click.Context, period: str, output_format: str) -> None:
                 filtered_ids.add(sid)
         session_metrics = [c for c in session_metrics if c.session_id in filtered_ids]
 
+    # Match subagent names to skill names across the selected sessions,
+    # scoped by root dir, before schema generation.
+    apply_cross_session_skill_matching(
+        session_metrics,
+        session_dirs_map,
+        component_aliases=load_component_aliases(ctx.obj.get("component_alias_file")),
+    )
+
     session_output_dir = ctx.obj.get("session_output_dir")
     if isinstance(session_output_dir, str) and session_output_dir.strip():
         session_ids = [str(c.session_id) for c in session_metrics if getattr(c, "session_id", None)]
@@ -930,6 +949,14 @@ def _build_period_report(
             if rd in session_filter:
                 filtered_ids.add(sid)
         session_metrics = [c for c in session_metrics if c.session_id in filtered_ids]
+
+    # Match subagent names to skill names across the selected sessions,
+    # scoped by root dir, before period aggregation.
+    apply_cross_session_skill_matching(
+        session_metrics,
+        session_dirs,
+        component_aliases=load_component_aliases(options.get("component_alias_file")),
+    )
 
     export_session_list = options.get("export_session_list")
     if isinstance(export_session_list, str) and export_session_list.strip():
@@ -1226,6 +1253,7 @@ def _collect_period_session_metrics(
     sessions = _list_sessions(options)
     out = _PeriodSessionMetrics()
     model_aliases = load_model_aliases(options.get("model_alias_file"))
+    component_aliases = load_component_aliases(options.get("component_alias_file"))
     results: dict[str, tuple[dict[str, object], list[dict[str, object]]]] = {}
 
     if options["mode"] == "local":
@@ -1328,24 +1356,25 @@ def _collect_period_session_metrics(
     worker_count = min(len(results), max(os.cpu_count() or 1, 1))
     if worker_count <= 1:
         for sid, (session_info, messages) in results.items():
-            out.append(build_canonical_metrics(sid, messages, session_info=session_info))
+            out.append(build_canonical_metrics(sid, messages, session_info=session_info, component_aliases=component_aliases))
             if progress_callback:
                 progress_callback(len(out), eligible_count)
         return out
 
     start_method = "fork" if sys.platform.startswith("linux") else "spawn"
-    global _FORK_PERIOD_METRIC_INPUTS
+    global _FORK_PERIOD_METRIC_INPUTS, _FORK_COMPONENT_ALIASES
     try:
         if start_method == "fork":
             # Fork workers inherit this mapping copy-on-write. Submit IDs only so we
             # do not pickle hundreds of thousands of already-parsed SQLite parts.
             _FORK_PERIOD_METRIC_INPUTS = results
+            _FORK_COMPONENT_ALIASES = component_aliases
         with ProcessPoolExecutor(max_workers=worker_count, mp_context=mp.get_context(start_method)) as executor:
             if start_method == "fork":
                 futures = {executor.submit(_build_fork_period_session_metrics, sid): sid for sid in results}
             else:
                 futures = {
-                    executor.submit(_build_session_metrics, sid, messages, session_info): sid
+                    executor.submit(_build_session_metrics, sid, messages, session_info, component_aliases=component_aliases): sid
                     for sid, (session_info, messages) in results.items()
                 }
             done = 0
@@ -1356,12 +1385,13 @@ def _collect_period_session_metrics(
                 except Exception:
                     # Best-effort: fall back to local compute if worker fails.
                     session_info, messages = results.get(sid, ({}, []))
-                    out.append(build_canonical_metrics(sid, messages, session_info=session_info))
+                    out.append(build_canonical_metrics(sid, messages, session_info=session_info, component_aliases=component_aliases))
                 done += 1
                 if progress_callback:
                     progress_callback(done, eligible_count)
     finally:
         _FORK_PERIOD_METRIC_INPUTS = {}
+        _FORK_COMPONENT_ALIASES = {}
 
     return out
 
@@ -1370,14 +1400,25 @@ def _build_session_metrics(
     session_id: str,
     messages: list[dict[str, object]],
     session_info: dict[str, object] | None = None,
+    component_aliases: dict[str, str] | None = None,
 ) -> object:
-    return build_canonical_metrics(session_id, messages, session_info=session_info)
+    return build_canonical_metrics(
+        session_id,
+        messages,
+        session_info=session_info,
+        component_aliases=component_aliases,
+    )
 
 
 def _build_fork_period_session_metrics(session_id: str) -> object:
     """Build one metric from the parent process's fork-inherited input mapping."""
     session_info, messages = _FORK_PERIOD_METRIC_INPUTS[session_id]
-    return build_canonical_metrics(session_id, messages, session_info=session_info)
+    return build_canonical_metrics(
+        session_id,
+        messages,
+        session_info=session_info,
+        component_aliases=_FORK_COMPONENT_ALIASES or None,
+    )
 
 
 def _filter_messages_by_model(

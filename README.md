@@ -160,6 +160,7 @@ If you know [CodeBurn](https://github.com/getagentseal/codeburn), the goal is si
 - `--retries <count>`
 - `--no-warmup`
 - `--model-alias-file <path>`
+- `-caf/--component-alias-file <path>`
 - `--session-filter <root1,root2,...>`
 - `--loc-scope code|all` (default: `code`)
 - `--loc-exclude <pattern1,pattern2,...>`
@@ -229,6 +230,46 @@ Load order:
 1. `--model-alias-file`
 2. `OPTOKEN_MODEL_ALIAS_FILE`
 3. `./models.conf`
+
+---
+
+## Component aliases
+
+Use `components.conf` to merge configured skill, subagent, and tool names under one
+canonical Component Contribution group in session and period reports:
+
+```ini
+# canonical = alias1,alias2
+make-suite = make-plan, make-implement, make_test
+lean-ctx = lean-ctx_ctx_read, lean-ctx_ctx_search
+```
+
+- Rules match exact original component names case-insensitively; wildcards are not supported.
+- Explicit aliases override automatic grouping (skill/subagent prefix matching). Components
+  without an alias keep the current grouping behavior.
+- Automatic subagent-to-skill matching in period and JSON reports works across all
+  selected sessions in the same root directory: a subagent matches a skill when its
+  name starts with the skill name (case-insensitive, no separator required), and the
+  longest matching skill wins. Candidates come only from available and invoked skill
+  rows of the report's selected sessions, so date and session filters apply. Single
+  session reports match within the session only, using the same case-insensitive
+  longest-prefix rule. Explicit aliases always take precedence over automatic matching.
+- When a skill's own name carries an explicit alias, prefix-matched subagents inherit
+  the skill's canonical group, so the skill and its matched subagents aggregate
+  together as `mixed` in session and period/JSON reports.
+- Configured names merge across component types and across sessions in period reports.
+  Merged rows with different component types are shown as `mixed`.
+- Original component names and types stay intact in detail data and in the JSON
+  `components[].component_group` output. Top Tools and MCP Servers output is unchanged.
+- Repeated rules for the same canonical label combine their aliases. Malformed rules
+  (missing `=`, empty canonical label, empty alias list, wildcard) and aliases assigned to
+  two different canonical labels fail with a clear error.
+
+Load order:
+
+1. `-caf/--component-alias-file`
+2. `OPTOKEN_COMPONENT_ALIAS_FILE`
+3. `./components.conf`
 
 ---
 

@@ -6,7 +6,7 @@ import re
 
 from .content_attribution import collect_content_attribution
 from .cost import build_default_pricing_lookup
-from .activity_classifier import classify_turn, extract_assistant_activity, extract_user_text
+from .activity_classifier import classify_turn, extract_assistant_activity, extract_root_dir, extract_user_text
 from .telemetry import TelemetryCall, collect_telemetry_calls, summarize_telemetry
 from .pricing import PricingLookup, PricingResolution, estimate_session_cost_usd, tier_applicability
 from .pricing import load_local_model_patterns
@@ -54,6 +54,7 @@ def build_canonical_metrics(
     messages: list[dict[str, Any]],
     *,
     session_info: dict[str, Any] | None = None,
+    component_aliases: dict[str, str] | None = None,
 ) -> CanonicalMetrics:
     telemetry_calls = collect_telemetry_calls(messages)
     telemetry = summarize_telemetry(telemetry_calls)
@@ -140,7 +141,7 @@ def build_canonical_metrics(
         )
 
     mcp_rows = _build_mcp_rows(tool_rows)
-    component_family_rows = _build_component_family_rows(component_rows)
+    component_family_rows = _build_component_family_rows(component_rows, component_aliases=component_aliases)
 
     token_composition = {
         "input": telemetry.input_tokens,
@@ -699,30 +700,171 @@ _CORE_OPENCODE_SKILLS = {"plan", "implement"}
 _CORE_OPENCODE_SUBAGENTS = {"explore", "general"}
 
 
-def _build_component_family_rows(component_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    _normalize_skill_component_groups(component_rows)
-    grouped: dict[str, dict[str, Any]] = {}
-    type_sets: dict[str, set[str]] = {}
+def _match_subagents_to_skills(
+    component_rows: list[dict[str, Any]],
+    component_aliases: dict[str, str] | None = None,
+) -> tuple[set[str], set[int]]:
+    """Match subagent rows to same-session skill names.
+
+    A subagent matches a skill when the skill name is a case-insensitive
+    prefix of the subagent name (no separator required). The longest
+    matching skill wins, and the skill's effective component group (after
+    explicit aliases) becomes the subagent's component group. Returns the
+    set of matched raw skill names (protected from prefix collapsing) and
+    the ids of the matched subagent rows. Explicitly aliased subagent rows
+    are left for alias application.
+    """
+    alias_lookup = {str(name).lower(): str(label) for name, label in (component_aliases or {}).items()}
+    skill_names: list[str] = []
     for row in component_rows:
+        if row.get("component_type") != "skill":
+            continue
+        skill = str(row.get("component_name", row.get("component_group", "")))
+        if skill:
+            skill_names.append(skill)
+
+    matched_skills: set[str] = set()
+    matched_rows: set[int] = set()
+    if not skill_names:
+        return matched_skills, matched_rows
+
+    for row in component_rows:
+        if row.get("component_type") != "subagent":
+            continue
+        name = str(row.get("component_name", row.get("component_group", "")))
+        if name.lower() in alias_lookup:
+            continue
+        lowered = name.lower()
+        best: str | None = None
+        for skill in skill_names:
+            lowered_skill = skill.lower()
+            if lowered.startswith(lowered_skill):
+                if best is None or len(skill) > len(best):
+                    best = skill
+        if best is not None:
+            row["component_group"] = alias_lookup.get(best.lower(), best)
+            matched_skills.add(best)
+            matched_rows.add(id(row))
+    return matched_skills, matched_rows
+
+
+def _session_root_dir(
+    metrics: Any,
+    session_dirs: dict[str, str] | None,
+) -> str:
+    raw_dir = str((session_dirs or {}).get(str(metrics.session_id), "") or "")
+    return extract_root_dir(raw_dir) if raw_dir else (str(metrics.session_id) or "-")
+
+
+def build_cross_session_skill_index(
+    session_metrics: list[Any],
+    session_dirs: dict[str, str] | None = None,
+) -> dict[str, list[str]]:
+    """Collect skill component names from the selected sessions, keyed by root dir."""
+    index: dict[str, list[str]] = {}
+    for metrics in session_metrics:
+        root_dir = _session_root_dir(metrics, session_dirs)
+        names = index.setdefault(root_dir, [])
+        for row in metrics.component_rows:
+            if row.get("component_type") != "skill":
+                continue
+            name = str(row.get("component_name", row.get("component_group", "")))
+            if name:
+                names.append(name)
+    return index
+
+
+def apply_cross_session_skill_matching(
+    session_metrics: list[Any],
+    session_dirs: dict[str, str] | None = None,
+    *,
+    component_aliases: dict[str, str] | None = None,
+) -> None:
+    """Match subagent names to skill names across the selected sessions.
+
+    Skill candidates come from skill component rows of the same report
+    sessions (available and invoked), partitioned by root dir. A subagent
+    matches a skill when its name starts with the skill name
+    (case-insensitive, no separator required); the longest matching skill
+    wins and the skill's effective component group (after explicit aliases)
+    becomes the subagent's component group. Explicitly aliased names are
+    left for alias application.
+    """
+    alias_lookup = {str(name).lower(): str(label) for name, label in (component_aliases or {}).items()}
+    index = build_cross_session_skill_index(session_metrics, session_dirs)
+    for metrics in session_metrics:
+        root_dir = _session_root_dir(metrics, session_dirs)
+        skill_names = index.get(root_dir)
+        if not skill_names:
+            continue
+        for row in metrics.component_rows:
+            if row.get("component_type") != "subagent":
+                continue
+            name = str(row.get("component_name", row.get("component_group", "")))
+            if not name or name.lower() in alias_lookup:
+                continue
+            lowered = name.lower()
+            best: str | None = None
+            for skill in skill_names:
+                lowered_skill = skill.lower()
+                if lowered.startswith(lowered_skill) and (best is None or len(skill) > len(best)):
+                    best = skill
+            if best is not None:
+                row["component_group"] = alias_lookup.get(best.lower(), best)
+
+
+def _build_component_family_rows(
+    component_rows: list[dict[str, Any]],
+    *,
+    component_aliases: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    alias_lookup: dict[str, str] = {}
+    if component_aliases:
+        alias_lookup = {str(name).lower(): str(label) for name, label in component_aliases.items()}
+    aliased_names = frozenset(alias_lookup)
+    matched_skill_names, matched_subagent_ids = _match_subagents_to_skills(
+        component_rows, component_aliases=alias_lookup
+    )
+    _normalize_skill_component_groups(component_rows, matched_skill_names, aliased_names)
+    # Explicit aliases override automatic grouping: reassign the group of
+    # every row whose original name carries an alias.
+    if alias_lookup:
+        for row in component_rows:
+            target = alias_lookup.get(str(row.get("component_name", "")).lower())
+            if target is not None:
+                row["component_group"] = target
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    type_sets: dict[tuple[str, str], set[str]] = {}
+    for row in component_rows:
+        ctype = row["component_type"]
         group = str(row["component_group"])
-        if group not in grouped:
-            grouped[group] = {
+        name = str(row.get("component_name", ""))
+        # Unmatched subagents keep their reduced label but aggregate only
+        # with other unmatched subagents. A structured key can never equal
+        # a tool/skill group label such as "subagent:make". Explicitly
+        # aliased rows aggregate by their canonical group instead.
+        if ctype == "subagent" and id(row) not in matched_subagent_ids and name.lower() not in aliased_names:
+            key = ("subagent", group)
+        else:
+            key = ("group", group)
+        if key not in grouped:
+            grouped[key] = {
                 "component_group": group,
                 "tokens": 0,
                 "estimated_session_tokens": 0,
                 "calls": 0,
             }
-        type_sets.setdefault(group, set()).add(row["component_type"])
-        g = grouped[group]
+        type_sets.setdefault(key, set()).add(ctype)
+        g = grouped[key]
         g["tokens"] += int(row["tokens"])
         g["estimated_session_tokens"] += int(row["estimated_session_tokens"])
         g["calls"] += int(row["calls"])
 
     total_tokens = sum(v["tokens"] for v in grouped.values()) or 1
     out: list[dict[str, Any]] = []
-    for g in grouped.values():
+    for key, g in grouped.items():
         group = g["component_group"]
-        types = type_sets.get(group, set())
+        types = type_sets.get(key, set())
         out.append(
             {
                 "component_type": "mixed" if len(types) > 1 else (types.pop() if types else "unknown"),
@@ -763,7 +905,13 @@ def _build_core_rows(component_rows: list[dict[str, Any]]) -> list[dict[str, Any
     return rows
 
 
-def _normalize_skill_component_groups(component_rows: list[dict[str, Any]]) -> None:
+def _normalize_skill_component_groups(
+    component_rows: list[dict[str, Any]],
+    matched_skill_names: set[str] | None = None,
+    aliased_names: frozenset[str] = frozenset(),
+) -> None:
+    if matched_skill_names is None:
+        matched_skill_names = set()
     # Collect all prefixes from skills (hyphenated names)
     skill_prefix_counts: dict[str, int] = {}
     for row in component_rows:
@@ -787,9 +935,16 @@ def _normalize_skill_component_groups(component_rows: list[dict[str, Any]]) -> N
         if row.get("component_type") != "skill":
             continue
         name = str(row.get("component_name", row.get("component_group", "")))
+        # Explicitly aliased skills keep their group for alias application.
+        if name.lower() in aliased_names:
+            continue
         if "-" not in name:
             continue
         prefix = name.split("-", 1)[0]
+        # Matched skill groups keep their exact name (no prefix collapse).
+        if name in matched_skill_names:
+            row["component_group"] = name
+            continue
         # Normalize to prefix if:
         # - multiple skills share the prefix, OR
         # - a tool already exists with the same prefix as group

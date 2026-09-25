@@ -402,6 +402,53 @@ def test_period_collection_preloads_pricing_before_fork_and_reuses_lookup(monkey
     ] == [(1, 10, 5, 1, 2, 0.01, 1)] * 2
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="fork alias handoff is Linux-specific")
+def test_period_collection_fork_workers_receive_component_aliases(monkeypatch, tmp_path) -> None:
+    alias_file = tmp_path / "components.conf"
+    alias_file.write_text("deep-code-review = deep\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "_list_sessions", lambda _options: _sessions())
+    monkeypatch.setattr(cli, "_get_messages", lambda _options, _sid: _deep_alias_messages(_sid))
+    monkeypatch.setattr(cli.LocalSessionService, "find_database_path", lambda _path: tmp_path / "db.sqlite")
+    monkeypatch.setattr(cli.os, "cpu_count", lambda: 2)
+
+    options = {
+        "mode": "local",
+        "db_path": None,
+        "model_alias_file": None,
+        "session_filter": None,
+        "model_filter": None,
+        "component_alias_file": str(alias_file),
+    }
+    metrics = cli._collect_period_session_metrics(
+        options,
+        datetime.fromtimestamp(1_699_000_000, UTC),
+        datetime.fromtimestamp(1_701_000_000, UTC),
+    )
+
+    assert sorted(metric.session_id for metric in metrics) == ["s1", "s2"]
+    for metric in metrics:
+        groups = {row["component_group"]: row for row in metric.component_family_rows}
+        assert "deep-code-review" in groups
+        assert "deep" not in groups
+        assert groups["deep-code-review"]["calls"] == 1
+
+
+def _deep_alias_messages(_sid: str):
+    return [
+        {
+            "role": "assistant",
+            "info": {
+                "tokens": {"input": 10, "output": 5, "reasoning": 1, "cache": {"read": 2, "write": 3}},
+                "cost": 0.01,
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {"type": "tool", "tool": "deep", "state": {"status": "completed", "output": "review"}},
+            ],
+        }
+    ]
+
+
 def test_lifetime_command(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_list_sessions", lambda _opts: _sessions())
     monkeypatch.setattr(cli, "_get_messages", lambda _opts, _sid: _messages(_sid))
@@ -722,3 +769,171 @@ def test_local_query_benchmark_live_fixture_does_not_mutate_database(monkeypatch
     assert all(f"workers={workers}" in result.output for workers in (1, 2, 4, 8))
     assert "recommendation:" in result.output
     assert db.read_bytes() == before
+
+
+def test_period_component_stats_merge_aliased_groups_across_sessions() -> None:
+    # Mirrors _build_period_report's component_map keys (type|group|name),
+    # built from aliased canonical rows of two different sessions.
+    component_map = {
+        "tool|make-suite|make_test": {"tokens": 4.0, "calls": 1.0},
+        "skill|make-suite|make-plan": {"tokens": 6.0, "calls": 1.0},
+        "skill|make-suite|make-implement": {"tokens": 2.0, "calls": 1.0},
+        "tool|lean-ctx|lean-ctx_ctx_search": {"tokens": 3.0, "calls": 1.0},
+    }
+    stats = cli._finalize_component_stats_canonical(component_map)
+    rows = {r["component_group"]: r for r in stats["rows"]}
+    merged = rows["make-suite"]
+    assert merged["component_type"] == "mixed"
+    assert merged["tokens"] == 12
+    assert merged["calls"] == 3
+    assert rows["lean-ctx"]["component_type"] == "tool"
+
+
+def _component_metric(session_id: str, rows: list) -> CanonicalMetrics:
+    return CanonicalMetrics(
+        session_id=session_id, model="unknown", input_tokens=0, output_tokens=0,
+        reasoning_tokens=0, cache_read_tokens=0, session_total_tokens=0,
+        api_calls=0, actual_cost_usd=0.0, estimated_cost_usd=0.0,
+        token_composition={}, component_rows=rows, component_family_rows=[],
+        core_rows=[], tool_rows=[], mcp_rows=[], per_model_costs=[],
+    )
+
+
+def _cross_session_metrics_fixture(monkeypatch, tmp_path, s2_directory: str) -> str:
+    rows_a = [
+        {"component_type": "subagent", "component_group": "deep", "component_name": "deep-code-reviewer-qwen38", "tokens": 50, "estimated_session_tokens": 50, "calls": 3},
+    ]
+    rows_b = [
+        {"component_type": "skill", "component_group": "deep-code-reviewer", "component_name": "deep-code-reviewer", "tokens": 20, "estimated_session_tokens": 20, "calls": 0},
+    ]
+    metrics = cli._PeriodSessionMetrics()
+    for sid, rows in (("s1", rows_a), ("s2", rows_b)):
+        metrics.append(_component_metric(sid, rows))
+    metrics.matched_session_count = 2
+    monkeypatch.setattr(cli, "_list_sessions", lambda _options: [
+        {"id": "s1", "directory": "/tmp/alpha"},
+        {"id": "s2", "directory": s2_directory},
+    ])
+    monkeypatch.setattr(cli, "_collect_period_session_metrics", lambda *args, **kwargs: metrics)
+    return str(tmp_path / "no-aliases.conf")
+
+
+def test_period_report_matches_subagent_to_skill_in_other_session(monkeypatch, tmp_path) -> None:
+    alias_file = _cross_session_metrics_fixture(monkeypatch, tmp_path, "/tmp/alpha")
+    options = {
+        "mode": "local",
+        "db_path": None,
+        "model_alias_file": None,
+        "component_alias_file": alias_file,
+        "session_filter": None,
+        "model_filter": None,
+        "export_session_list": None,
+        "session_output_dir": None,
+    }
+    report = cli._build_period_report(
+        options,
+        datetime.fromtimestamp(1_700_000_000, UTC),
+        datetime.fromtimestamp(1_700_100_000, UTC),
+    )
+    rows = {r["component_group"]: r for r in report["component_stats"]["rows"]}
+    merged = rows["deep-code-reviewer"]
+    assert merged["component_type"] == "mixed"
+    assert merged["tokens"] == 70
+    assert merged["calls"] == 3
+
+
+def test_json_report_matches_subagent_to_skill_in_other_session(monkeypatch, tmp_path) -> None:
+    alias_file = _cross_session_metrics_fixture(monkeypatch, tmp_path, "/tmp/alpha")
+    result = CliRunner().invoke(
+        cli.main,
+        ["--no-warmup", "-caf", alias_file, "json", "--period", "daily"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    components = {
+        (c["component_type"], c["component_group"], c["component_name"]): c
+        for c in payload["context_estimates"]["components"]
+    }
+    assert ("subagent", "deep-code-reviewer", "deep-code-reviewer-qwen38") in components
+    assert ("skill", "deep-code-reviewer", "deep-code-reviewer") in components
+
+
+def test_json_report_cross_session_matching_respects_roots_and_session_filter(monkeypatch, tmp_path) -> None:
+    alias_file = _cross_session_metrics_fixture(monkeypatch, tmp_path, "/tmp/beta")
+    result = CliRunner().invoke(
+        cli.main,
+        ["--no-warmup", "-caf", alias_file, "-sf", "alpha", "json", "--period", "daily"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    components = {
+        (c["component_type"], c["component_group"], c["component_name"]): c
+        for c in payload["context_estimates"]["components"]
+    }
+    # s2 is filtered out (and in another root), so the subagent stays unmatched.
+    subagent_row = components[("subagent", "deep", "deep-code-reviewer-qwen38")]
+    assert subagent_row["estimated_session_tokens"] == 50
+    assert not any(group == "deep-code-reviewer" for (_, group, _name) in components)
+
+
+def _aliased_skill_cross_session_fixture(monkeypatch, tmp_path) -> str:
+    # The skill row already carries its canonical group, as
+    # build_canonical_metrics applies aliases before cross-session matching.
+    rows_a = [
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-code-fixes-coder", "tokens": 50, "estimated_session_tokens": 50, "calls": 3},
+    ]
+    rows_b = [
+        {"component_type": "skill", "component_group": "make-code-changes", "component_name": "make-code-fixes", "tokens": 20, "estimated_session_tokens": 20, "calls": 0},
+    ]
+    alias_file = tmp_path / "components.conf"
+    alias_file.write_text("make-code-changes = make-code-fixes\n", encoding="utf-8")
+    metrics = cli._PeriodSessionMetrics()
+    metrics.append(_component_metric("s1", rows_a))
+    metrics.append(_component_metric("s2", rows_b))
+    metrics.matched_session_count = 2
+    monkeypatch.setattr(cli, "_list_sessions", lambda _options: [
+        {"id": "s1", "directory": "/tmp/alpha"},
+        {"id": "s2", "directory": "/tmp/alpha"},
+    ])
+    monkeypatch.setattr(cli, "_collect_period_session_metrics", lambda *args, **kwargs: metrics)
+    return str(alias_file)
+
+
+def test_period_report_propagates_aliased_skill_group_to_subagent(monkeypatch, tmp_path) -> None:
+    alias_file = _aliased_skill_cross_session_fixture(monkeypatch, tmp_path)
+    options = {
+        "mode": "local",
+        "db_path": None,
+        "model_alias_file": None,
+        "component_alias_file": alias_file,
+        "session_filter": None,
+        "model_filter": None,
+        "export_session_list": None,
+        "session_output_dir": None,
+    }
+    report = cli._build_period_report(
+        options,
+        datetime.fromtimestamp(1_700_000_000, UTC),
+        datetime.fromtimestamp(1_700_100_000, UTC),
+    )
+    rows = {r["component_group"]: r for r in report["component_stats"]["rows"]}
+    merged = rows["make-code-changes"]
+    assert merged["component_type"] == "mixed"
+    assert merged["tokens"] == 70
+    assert merged["calls"] == 3
+
+
+def test_json_report_propagates_aliased_skill_group_to_subagent(monkeypatch, tmp_path) -> None:
+    alias_file = _aliased_skill_cross_session_fixture(monkeypatch, tmp_path)
+    result = CliRunner().invoke(
+        cli.main,
+        ["--no-warmup", "-caf", alias_file, "json", "--period", "daily"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    components = {
+        (c["component_type"], c["component_group"], c["component_name"]): c
+        for c in payload["context_estimates"]["components"]
+    }
+    assert ("subagent", "make-code-changes", "make-code-fixes-coder") in components
+    assert ("skill", "make-code-changes", "make-code-fixes") in components

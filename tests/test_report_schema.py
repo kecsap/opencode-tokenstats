@@ -438,3 +438,41 @@ def test_report_aggregates_market_metadata_across_alias_rows(tmp_path) -> None:
     assert model["market_rate_date"] == "2026-01-01; 2026-02-01"
     assert model["market_status"] == "active; future"
     assert model["cost_basis"] == "market"
+
+
+def test_report_schema_keeps_aliased_component_groups_across_sessions() -> None:
+    def metric_with(sid: str, ctype: str, group: str, name: str, tokens: int) -> CanonicalMetrics:
+        return replace(
+            _metric(),
+            session_id=sid,
+            component_rows=[
+                {
+                    "component_type": ctype,
+                    "component_group": group,
+                    "component_name": name,
+                    "tokens": tokens,
+                    "estimated_session_tokens": tokens,
+                    "calls": 1,
+                }
+            ],
+            component_family_rows=[],
+        )
+
+    report = build_report_schema(
+        period="daily",
+        mode="local",
+        start=datetime(2026, 1, 1, tzinfo=UTC),
+        end=datetime(2026, 1, 2, tzinfo=UTC),
+        session_metrics=[
+            metric_with("s1", "tool", "make-suite", "make_test", 4),
+            metric_with("s2", "skill", "make-suite", "make-plan", 6),
+        ],
+    )
+
+    components = {(c["component_type"], c["component_name"]): c for c in report["context_estimates"]["components"]}
+    assert components[("tool", "make_test")]["component_group"] == "make-suite"
+    assert components[("tool", "make_test")]["estimated_session_tokens"] == 4
+    assert components[("skill", "make-plan")]["component_group"] == "make-suite"
+    assert components[("skill", "make-plan")]["estimated_session_tokens"] == 6
+    # Tool attribution is unaffected by component aliasing.
+    assert report["tools"][0]["name"] == "lean-ctx_ctx_search"

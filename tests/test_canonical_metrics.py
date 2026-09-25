@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from opencode_tokenstats.canonical_metrics import build_canonical_metrics, _build_component_family_rows, _pricing_warnings
+from opencode_tokenstats.canonical_metrics import (
+    CanonicalMetrics,
+    apply_cross_session_skill_matching,
+    build_canonical_metrics,
+    _build_component_family_rows,
+    _pricing_warnings,
+)
 from opencode_tokenstats.content_attribution import collect_content_attribution
 
 
@@ -809,6 +815,297 @@ def test_component_family_single_type_preserved() -> None:
     assert family[0]["tokens"] == 150
 
 
+def test_subagent_matches_skill_as_mixed_family() -> None:
+    """A subagent matching a same-session skill groups under the skill name as mixed."""
+    component_rows = [
+        {"component_type": "skill", "component_group": "make-code-changes", "component_name": "make-code-changes", "tokens": 100, "estimated_session_tokens": 100, "calls": 0},
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-code-changes-blbla-agent", "tokens": 50, "estimated_session_tokens": 50, "calls": 3},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 1
+    assert family[0]["component_group"] == "make-code-changes"
+    assert family[0]["component_type"] == "mixed"
+    assert family[0]["tokens"] == 150
+    assert family[0]["estimated_session_tokens"] == 150
+    assert family[0]["calls"] == 3
+
+
+def test_subagent_skill_match_is_case_insensitive() -> None:
+    """Skill/subagent matching ignores case and keeps the skill's original spelling."""
+    component_rows = [
+        {"component_type": "skill", "component_group": "Make-Code-Changes", "component_name": "Make-Code-Changes", "tokens": 10, "estimated_session_tokens": 10, "calls": 0},
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-code-changes-agent", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 1
+    assert family[0]["component_group"] == "Make-Code-Changes"
+    assert family[0]["component_type"] == "mixed"
+    assert family[0]["tokens"] == 15
+
+
+def test_subagent_skill_match_prefers_longest_skill() -> None:
+    """When skill names overlap, the longest matching skill wins."""
+    component_rows = [
+        {"component_type": "skill", "component_group": "make", "component_name": "make", "tokens": 1, "estimated_session_tokens": 1, "calls": 0},
+        {"component_type": "skill", "component_group": "make-code-changes", "component_name": "make-code-changes", "tokens": 2, "estimated_session_tokens": 2, "calls": 0},
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-code-changes-agent", "tokens": 3, "estimated_session_tokens": 3, "calls": 1},
+    ]
+    family = _build_component_family_rows(component_rows)
+    by_group = {r["component_group"]: r for r in family}
+
+    assert by_group["make-code-changes"]["component_type"] == "mixed"
+    assert by_group["make-code-changes"]["tokens"] == 5
+    assert by_group["make"]["component_type"] == "skill"
+    assert by_group["make"]["tokens"] == 1
+
+
+def test_subagent_skill_match_without_separator_boundary() -> None:
+    """Plain prefix matching matches even without a -/_ boundary."""
+    component_rows = [
+        {"component_type": "skill", "component_group": "make", "component_name": "make", "tokens": 1, "estimated_session_tokens": 1, "calls": 0},
+        {"component_type": "subagent", "component_group": "makeup", "component_name": "makeup-agent", "tokens": 2, "estimated_session_tokens": 2, "calls": 1},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 1
+    assert family[0]["component_group"] == "make"
+    assert family[0]["component_type"] == "mixed"
+    assert family[0]["tokens"] == 3
+
+
+def test_subagent_exact_skill_name_matches_as_mixed() -> None:
+    """A subagent with the exact skill name matches case-insensitively as mixed."""
+    component_rows = [
+        {"component_type": "skill", "component_group": "Make-Code-Changes", "component_name": "Make-Code-Changes", "tokens": 10, "estimated_session_tokens": 10, "calls": 0},
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-code-changes", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 1
+    assert family[0]["component_group"] == "Make-Code-Changes"
+    assert family[0]["component_type"] == "mixed"
+    assert family[0]["tokens"] == 15
+    assert family[0]["estimated_session_tokens"] == 15
+    assert family[0]["calls"] == 1
+
+
+def test_subagent_underscore_prefix_skill_matches_as_mixed() -> None:
+    """A subagent prefixed by a skill name followed by _ matches as mixed."""
+    component_rows = [
+        {"component_type": "skill", "component_group": "make-code-changes", "component_name": "make-code-changes", "tokens": 10, "estimated_session_tokens": 10, "calls": 0},
+        {"component_type": "subagent", "component_group": "make-code-changes", "component_name": "make-code-changes_blbla", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 1
+    assert family[0]["component_group"] == "make-code-changes"
+    assert family[0]["component_type"] == "mixed"
+    assert family[0]["tokens"] == 15
+    assert family[0]["estimated_session_tokens"] == 15
+    assert family[0]["calls"] == 1
+
+
+def test_unmatched_subagent_isolated_from_colliding_labels() -> None:
+    """Unmatched subagents never merge with other types sharing the reduced label."""
+    component_rows = [
+        {"component_type": "tool", "component_group": "make", "component_name": "make_tool", "tokens": 10, "estimated_session_tokens": 10, "calls": 2},
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-agent", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 2
+    by_type = {r["component_type"]: r for r in family}
+    assert by_type["tool"]["component_group"] == "make"
+    assert by_type["tool"]["tokens"] == 10
+    assert by_type["subagent"]["component_group"] == "make"
+    assert by_type["subagent"]["tokens"] == 5
+
+
+def test_unmatched_subagents_group_together() -> None:
+    """Unmatched subagents sharing a reduced label still aggregate with each other."""
+    component_rows = [
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-a", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-b", "tokens": 7, "estimated_session_tokens": 7, "calls": 2},
+        {"component_type": "tool", "component_group": "make", "component_name": "make_tool", "tokens": 9, "estimated_session_tokens": 9, "calls": 3},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 2
+    subagent_row = next(r for r in family if r["component_type"] == "subagent")
+    tool_row = next(r for r in family if r["component_type"] == "tool")
+    assert subagent_row["component_group"] == "make"
+    assert subagent_row["tokens"] == 12
+    assert subagent_row["calls"] == 3
+    assert tool_row["tokens"] == 9
+
+
+def test_unmatched_subagent_key_does_not_collide_with_subagent_prefixed_group() -> None:
+    """An unmatched subagent never merges with a group literally named subagent:<label>."""
+    component_rows = [
+        {"component_type": "tool", "component_group": "subagent:make", "component_name": "subagent:make", "tokens": 10, "estimated_session_tokens": 10, "calls": 2},
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-agent", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+    ]
+    family = _build_component_family_rows(component_rows)
+
+    assert len(family) == 2
+    tool_row = next(r for r in family if r["component_type"] == "tool")
+    subagent_row = next(r for r in family if r["component_type"] == "subagent")
+    assert tool_row["component_group"] == "subagent:make"
+    assert tool_row["tokens"] == 10
+    assert subagent_row["component_group"] == "make"
+    assert subagent_row["tokens"] == 5
+
+
+def test_matched_skill_group_protected_from_prefix_collapse() -> None:
+    """A matched skill keeps its exact name even when the prefix rule would collapse it."""
+    component_rows = [
+        {"component_type": "skill", "component_group": "make-code-changes", "component_name": "make-code-changes", "tokens": 1, "estimated_session_tokens": 1, "calls": 0},
+        {"component_type": "skill", "component_group": "make-other", "component_name": "make-other", "tokens": 2, "estimated_session_tokens": 2, "calls": 0},
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-code-changes-agent", "tokens": 3, "estimated_session_tokens": 3, "calls": 1},
+    ]
+    family = _build_component_family_rows(component_rows)
+    by_group = {r["component_group"]: r for r in family}
+
+    assert by_group["make-code-changes"]["component_type"] == "mixed"
+    assert by_group["make-code-changes"]["tokens"] == 4
+    # Unmatched sibling skills still follow the existing prefix rule.
+    assert by_group["make"]["component_type"] == "skill"
+    assert by_group["make"]["tokens"] == 2
+
+
+def _cross_session_metrics(session_id: str, rows: list[dict]) -> CanonicalMetrics:
+    return CanonicalMetrics(
+        session_id=session_id, model="unknown", input_tokens=0, output_tokens=0,
+        reasoning_tokens=0, cache_read_tokens=0, session_total_tokens=0,
+        api_calls=0, actual_cost_usd=0.0, estimated_cost_usd=0.0,
+        token_composition={}, component_rows=rows, component_family_rows=[],
+        core_rows=[], tool_rows=[], mcp_rows=[], per_model_costs=[],
+    )
+
+
+def test_cross_session_subagent_matches_skill_in_other_session() -> None:
+    """A subagent matches a skill row from another selected session with the same root."""
+    rows_a = [
+        {"component_type": "subagent", "component_group": "deep", "component_name": "deep-code-reviewer-qwen38", "tokens": 50, "estimated_session_tokens": 50, "calls": 3},
+    ]
+    rows_b = [
+        {"component_type": "skill", "component_group": "deep-code-reviewer", "component_name": "deep-code-reviewer", "tokens": 20, "estimated_session_tokens": 20, "calls": 0},
+    ]
+    metrics = [_cross_session_metrics("s1", rows_a), _cross_session_metrics("s2", rows_b)]
+    apply_cross_session_skill_matching(metrics, {"s1": "/tmp/alpha", "s2": "/tmp/alpha"})
+    assert rows_a[0]["component_group"] == "deep-code-reviewer"
+
+
+def test_cross_session_matching_stays_within_root() -> None:
+    """Skill rows from other root dirs are not candidates."""
+    rows_a = [
+        {"component_type": "subagent", "component_group": "deep", "component_name": "deep-code-reviewer-qwen38", "tokens": 50, "estimated_session_tokens": 50, "calls": 3},
+    ]
+    rows_b = [
+        {"component_type": "skill", "component_group": "deep-code-reviewer", "component_name": "deep-code-reviewer", "tokens": 20, "estimated_session_tokens": 20, "calls": 0},
+    ]
+    metrics = [_cross_session_metrics("s1", rows_a), _cross_session_metrics("s2", rows_b)]
+    apply_cross_session_skill_matching(metrics, {"s1": "/tmp/alpha", "s2": "/tmp/beta"})
+    assert rows_a[0]["component_group"] == "deep"
+
+
+def test_cross_session_match_is_case_insensitive_prefix_without_separator() -> None:
+    """Matching is a case-insensitive plain prefix; no -/_ boundary required."""
+    rows_a = [
+        {"component_type": "subagent", "component_group": "deep", "component_name": "Deep-Code-ReviewerQwen38", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+    ]
+    rows_b = [
+        {"component_type": "skill", "component_group": "deep-code-reviewer", "component_name": "deep-code-reviewer", "tokens": 1, "estimated_session_tokens": 1, "calls": 0},
+    ]
+    metrics = [_cross_session_metrics("s1", rows_a), _cross_session_metrics("s2", rows_b)]
+    apply_cross_session_skill_matching(metrics, {"s1": "/tmp/alpha", "s2": "/tmp/alpha"})
+    assert rows_a[0]["component_group"] == "deep-code-reviewer"
+
+
+def test_cross_session_match_prefers_longest_skill() -> None:
+    """When several selected-session skills match, the longest skill name wins."""
+    rows_a = [
+        {"component_type": "subagent", "component_group": "review", "component_name": "review-deep-qwen38", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+    ]
+    rows_b = [
+        {"component_type": "skill", "component_group": "review", "component_name": "review", "tokens": 1, "estimated_session_tokens": 1, "calls": 0},
+        {"component_type": "skill", "component_group": "review-deep", "component_name": "review-deep", "tokens": 1, "estimated_session_tokens": 1, "calls": 0},
+    ]
+    metrics = [_cross_session_metrics("s1", rows_a), _cross_session_metrics("s2", rows_b)]
+    apply_cross_session_skill_matching(metrics, {"s1": "/tmp/alpha", "s2": "/tmp/alpha"})
+    assert rows_a[0]["component_group"] == "review-deep"
+
+
+def test_cross_session_matches_invoked_skill_from_other_session() -> None:
+    """Invoked skill rows (calls > 0) are candidates alongside available skills."""
+    rows_a = [
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-test-suite-worker", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+    ]
+    rows_b = [
+        {"component_type": "skill", "component_group": "make-test-suite", "component_name": "make-test-suite", "tokens": 2, "estimated_session_tokens": 2, "calls": 2},
+    ]
+    metrics = [_cross_session_metrics("s1", rows_a), _cross_session_metrics("s2", rows_b)]
+    apply_cross_session_skill_matching(metrics, {"s1": "/tmp/alpha", "s2": "/tmp/alpha"})
+    assert rows_a[0]["component_group"] == "make-test-suite"
+
+
+def test_cross_session_matching_skips_aliased_subagents() -> None:
+    """Explicitly aliased subagent names are left for alias application."""
+    rows_a = [
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-code-fixes", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+    ]
+    rows_b = [
+        {"component_type": "skill", "component_group": "make-code", "component_name": "make-code", "tokens": 1, "estimated_session_tokens": 1, "calls": 0},
+    ]
+    metrics = [_cross_session_metrics("s1", rows_a), _cross_session_metrics("s2", rows_b)]
+    apply_cross_session_skill_matching(
+        metrics,
+        {"s1": "/tmp/alpha", "s2": "/tmp/alpha"},
+        component_aliases={"make-code-fixes": "make-suite"},
+    )
+    assert rows_a[0]["component_group"] == "make"
+
+
+def test_cross_session_match_inherits_aliased_skill_group() -> None:
+    """A cross-session match assigns the skill's aliased canonical group."""
+    rows_a = [
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-code-fixes-coder", "tokens": 50, "estimated_session_tokens": 50, "calls": 3},
+    ]
+    rows_b = [
+        {"component_type": "skill", "component_group": "make-code-fixes", "component_name": "make-code-fixes", "tokens": 20, "estimated_session_tokens": 20, "calls": 0},
+    ]
+    metrics = [_cross_session_metrics("s1", rows_a), _cross_session_metrics("s2", rows_b)]
+    apply_cross_session_skill_matching(
+        metrics,
+        {"s1": "/tmp/alpha", "s2": "/tmp/alpha"},
+        component_aliases={"make-code-fixes": "make-code-changes"},
+    )
+    assert rows_a[0]["component_group"] == "make-code-changes"
+    assert rows_a[0]["component_name"] == "make-code-fixes-coder"
+
+
+def test_cross_session_explicit_subagent_alias_kept_over_skill_target() -> None:
+    """An explicitly aliased subagent keeps its own canonical group."""
+    rows_a = [
+        {"component_type": "subagent", "component_group": "make-suite", "component_name": "make-code-fixes-coder", "tokens": 5, "estimated_session_tokens": 5, "calls": 1},
+    ]
+    rows_b = [
+        {"component_type": "skill", "component_group": "make-code-changes", "component_name": "make-code-fixes", "tokens": 1, "estimated_session_tokens": 1, "calls": 0},
+    ]
+    metrics = [_cross_session_metrics("s1", rows_a), _cross_session_metrics("s2", rows_b)]
+    apply_cross_session_skill_matching(
+        metrics,
+        {"s1": "/tmp/alpha", "s2": "/tmp/alpha"},
+        component_aliases={
+            "make-code-fixes": "make-code-changes",
+            "make-code-fixes-coder": "make-suite",
+        },
+    )
+    assert rows_a[0]["component_group"] == "make-suite"
+
+
 def test_skill_family_preserves_single_hyphenated_skill_name() -> None:
     messages = [
         {
@@ -1343,3 +1640,180 @@ def test_canonical_metrics_uses_nonlocal_models_dev_market_estimate(monkeypatch)
     assert row["estimated_future_market_cost"] == pytest.approx(4.0)
     assert row["cost"] == pytest.approx(2.0)
     assert row["market_status"] == "future"
+
+
+def _alias_session_messages() -> list[dict]:
+    return [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {"status": "completed", "input": {"name": "make-plan"}, "output": "loaded"},
+                },
+                {
+                    "type": "tool",
+                    "tool": "task",
+                    "state": {"status": "completed", "input": {"subagent_type": "make_implement", "prompt": "x"}, "output": "done"},
+                },
+                {
+                    "type": "tool",
+                    "tool": "make_test",
+                    "state": {"status": "completed", "output": "ok"},
+                },
+            ],
+        }
+    ]
+
+
+def test_component_aliases_merge_component_types_in_family() -> None:
+    aliases = {"make-plan": "make-suite", "make_implement": "make-suite", "make_test": "make-suite"}
+    out = build_canonical_metrics("s-alias", _alias_session_messages(), component_aliases=aliases)
+
+    # Raw names and types stay intact; groups become the canonical label.
+    rows = {(r["component_type"], r["component_name"]): r["component_group"] for r in out.component_rows}
+    assert rows[("skill", "make-plan")] == "make-suite"
+    assert rows[("subagent", "make_implement")] == "make-suite"
+    assert rows[("tool", "make_test")] == "make-suite"
+
+    family = {r["component_group"]: r for r in out.component_family_rows}
+    merged = family["make-suite"]
+    assert merged["component_type"] == "mixed"
+    assert merged["tokens"] == sum(
+        r["tokens"] for r in out.component_rows if r["component_group"] == "make-suite"
+    )
+
+
+def test_component_aliases_match_case_insensitively() -> None:
+    aliases = {"make-plan": "make-suite"}
+    out = build_canonical_metrics("s-alias-case", _alias_session_messages(), component_aliases=aliases)
+    skill = [r for r in out.component_rows if r["component_name"] == "make-plan"][0]
+    assert skill["component_group"] == "make-suite"
+
+
+def test_component_aliases_override_skill_prefix_normalization() -> None:
+    # Without aliases, alpha-one/alpha-two collapse to the shared prefix "alpha".
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {"status": "completed", "input": {"name": "alpha-one"}, "output": "loaded"},
+                },
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {"status": "completed", "input": {"name": "alpha-two"}, "output": "loaded"},
+                },
+            ],
+        }
+    ]
+    aliases = {"alpha-one": "first", "alpha-two": "second"}
+    out = build_canonical_metrics("s-alias-override", messages, component_aliases=aliases)
+    groups = {r["component_group"] for r in out.component_family_rows}
+    assert groups == {"first", "second"}
+
+
+def test_component_aliases_override_subagent_skill_matching() -> None:
+    # Without the alias, the subagent would adopt the same-session skill group.
+    messages = [
+        {
+            "role": "assistant",
+            "info": {
+                "modelID": "gpt-5.3-codex",
+                "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "cost": 0.1,
+                "system": "sys",
+            },
+            "parts": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool",
+                    "tool": "skill",
+                    "state": {"status": "completed", "input": {"name": "make-plan"}, "output": "loaded"},
+                },
+                {
+                    "type": "tool",
+                    "tool": "task",
+                    "state": {"status": "completed", "input": {"subagent_type": "make-plan-explore", "prompt": "x"}, "output": "done"},
+                },
+            ],
+        }
+    ]
+    aliases = {"make-plan-explore": "suite"}
+    out = build_canonical_metrics("s-alias-subagent", messages, component_aliases=aliases)
+    sub = [r for r in out.component_rows if r["component_name"] == "make-plan-explore"][0]
+    assert sub["component_group"] == "suite"
+    skill = [r for r in out.component_rows if r["component_name"] == "make-plan"][0]
+    assert skill["component_group"] == "make-plan"
+
+
+def test_component_aliases_leave_unaliased_components_untouched() -> None:
+    aliases = {"other": "other-group"}
+    out = build_canonical_metrics("s-alias-none", _alias_session_messages(), component_aliases=aliases)
+    rows = {(r["component_type"], r["component_name"]): r["component_group"] for r in out.component_rows}
+    # Skill collapses to the shared prefix "make" because a tool carries that group.
+    assert rows[("skill", "make-plan")] == "make"
+    assert rows[("subagent", "make_implement")] == "make"
+    assert rows[("tool", "make_test")] == "make"
+
+
+def test_skill_alias_propagates_to_prefix_matched_subagent() -> None:
+    """A prefix-matched subagent inherits the skill's aliased canonical group."""
+    component_rows = [
+        {"component_type": "skill", "component_group": "make-code-fixes", "component_name": "make-code-fixes", "tokens": 100, "estimated_session_tokens": 100, "calls": 0},
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-code-fixes-coder", "tokens": 50, "estimated_session_tokens": 50, "calls": 3},
+    ]
+    family = _build_component_family_rows(
+        component_rows,
+        component_aliases={"make-code-fixes": "make-code-changes"},
+    )
+
+    # Raw names and types stay intact; both rows carry the canonical group.
+    assert component_rows[0]["component_group"] == "make-code-changes"
+    assert component_rows[1]["component_group"] == "make-code-changes"
+    assert component_rows[0]["component_name"] == "make-code-fixes"
+    assert component_rows[1]["component_name"] == "make-code-fixes-coder"
+
+    assert len(family) == 1
+    assert family[0]["component_group"] == "make-code-changes"
+    assert family[0]["component_type"] == "mixed"
+    assert family[0]["tokens"] == 150
+
+
+def test_explicit_subagent_alias_beats_propagated_skill_group() -> None:
+    """An exact alias on the subagent itself wins over the inherited skill group."""
+    component_rows = [
+        {"component_type": "skill", "component_group": "make-code-fixes", "component_name": "make-code-fixes", "tokens": 100, "estimated_session_tokens": 100, "calls": 0},
+        {"component_type": "subagent", "component_group": "make", "component_name": "make-code-fixes-coder", "tokens": 50, "estimated_session_tokens": 50, "calls": 3},
+    ]
+    family = _build_component_family_rows(
+        component_rows,
+        component_aliases={
+            "make-code-fixes": "make-code-changes",
+            "make-code-fixes-coder": "make-suite",
+        },
+    )
+    by_group = {r["component_group"]: r for r in family}
+
+    assert by_group["make-suite"]["component_type"] == "subagent"
+    assert by_group["make-suite"]["tokens"] == 50
+    assert by_group["make-code-changes"]["component_type"] == "skill"
+    assert by_group["make-code-changes"]["tokens"] == 100
