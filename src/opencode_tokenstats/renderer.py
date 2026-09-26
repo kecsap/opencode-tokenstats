@@ -330,9 +330,15 @@ def _print_trends(console: Console, trends: dict[str, Any]) -> None:
     width = min(48, max(12, (console.width - 8) // 3))
 
     def fit(values: list[Any]) -> list[Any]:
-        if len(values) <= width:
-            return values
-        return [values[round(index * (len(values) - 1) / (width - 1))] for index in range(width)]
+        count = len(values)
+        if count >= width:
+            if count == width:
+                return values
+            return [values[round(index * (count - 1) / (width - 1))] for index in range(width)]
+        # Display-only resample: map each plot column to its proportional
+        # source bucket and repeat the original bucket value. Undefined
+        # buckets keep blank spans; no interpolation.
+        return [values[column * count // width] for column in range(width)]
 
     categories = [
         ("Input Tokens", "input_tokens", COL_BLUE),

@@ -1,6 +1,27 @@
 from __future__ import annotations
 
+import pytest
+
 from opencode_tokenstats import renderer
+
+
+def _captured_trend_values(monkeypatch, points, console_width=80):
+    values_by_chart = []
+
+    def build_chart(*args):
+        values_by_chart.append(args[1])
+        return None
+
+    monkeypatch.setattr(renderer, "_build_trend_chart", build_chart)
+
+    class Console:
+        width = console_width
+
+        def print(self, _value) -> None:
+            pass
+
+    renderer._print_trends(Console(), {"points": points, "outliers": []})
+    return values_by_chart
 
 
 def test_trend_ratio_footer_uses_delta_loc(monkeypatch) -> None:
@@ -78,8 +99,15 @@ def test_trend_sessions_chart_matches_lines_chart(monkeypatch) -> None:
     )
 
     lines, sessions = charts[-2:]
-    assert lines[:4] == ("Lines Changed", [3, 5, 7], renderer.COL_ORANGE, "changed 15  +0  -0  net +0")
-    assert sessions[:4] == ("Sessions", [2, 4, 6], renderer.COL_CYAN, "overall 12 sessions")
+    assert (lines[0], lines[2], lines[3]) == ("Lines Changed", renderer.COL_ORANGE, "changed 15  +0  -0  net +0")
+    assert (sessions[0], sessions[2], sessions[3]) == ("Sessions", renderer.COL_CYAN, "overall 12 sessions")
+    assert len(lines[1]) == 24
+    assert lines[1][0] == 3
+    assert lines[1][12] == 5
+    assert lines[1][23] == 7
+    assert lines[1][1] == 3
+    assert lines[1][22] == 7
+    assert (sessions[1][0], sessions[1][12], sessions[1][23]) == (2, 4, 6)
     assert lines[4:7] == sessions[4:7] == ("Jan 01", "Jan 02", "Jan 03")
     trend_row = renderables[2]
     for row in renderables[:3]:
@@ -88,6 +116,73 @@ def test_trend_sessions_chart_matches_lines_chart(monkeypatch) -> None:
         assert len(row.rows) == 1
     assert isinstance(renderables[3], renderer.Panel)
     assert renderables[3].title == "[bold]Chart Outliers[/bold]"
+
+
+def test_trend_short_series_expands_bucket_spans(monkeypatch) -> None:
+    values = _captured_trend_values(
+        monkeypatch,
+        [
+            {"date": "2026-01-01T00:00:00+00:00", "input_tokens": 3},
+            {"date": "2026-01-02T00:00:00+00:00", "input_tokens": 5},
+            {"date": "2026-01-03T00:00:00+00:00", "input_tokens": 7},
+        ],
+    )
+    assert len(values[0]) == 24
+    assert values[0] == [3] * 8 + [5] * 8 + [7] * 8
+
+
+def test_trend_undefined_span_stays_blank(monkeypatch) -> None:
+    values = _captured_trend_values(
+        monkeypatch,
+        [
+            {"date": "2026-01-01T00:00:00+00:00", "input_tokens_per_loc": 10},
+            {"date": "2026-01-02T00:00:00+00:00"},
+            {"date": "2026-01-03T00:00:00+00:00", "input_tokens_per_loc": 20},
+        ],
+    )
+    ratio = values[3]
+    assert len(ratio) == 24
+    assert ratio[0:8] == [10] * 8
+    assert all(value is None for value in ratio[8:16])
+    assert ratio[16:24] == [20] * 8
+
+
+def test_trend_lone_defined_value_stays_at_bucket_position(monkeypatch) -> None:
+    values = _captured_trend_values(
+        monkeypatch,
+        [
+            {"date": "2026-01-01T00:00:00+00:00"},
+            {"date": "2026-01-02T00:00:00+00:00", "input_tokens_per_loc": 10},
+            {"date": "2026-01-03T00:00:00+00:00"},
+        ],
+    )
+    ratio = values[3]
+    assert len(ratio) == 24
+    assert ratio[8:16] == [10] * 8
+    assert all(value is None for index, value in enumerate(ratio) if not 8 <= index < 16)
+
+
+def test_trend_singleton_series_spans_full_width(monkeypatch) -> None:
+    values = _captured_trend_values(
+        monkeypatch,
+        [{"date": "2026-01-01T00:00:00+00:00", "input_tokens": 42}],
+    )
+    assert values[0] == [42] * 24
+
+
+def test_trend_long_series_keeps_downsampling(monkeypatch) -> None:
+    values = _captured_trend_values(
+        monkeypatch,
+        [
+            {"date": f"2026-01-{day:02d}T00:00:00+00:00", "input_tokens": day}
+            for day in range(1, 31)
+        ],
+    )
+    assert len(values[0]) == 24
+    assert values[0][0] == 1
+    assert values[0][1] == 2
+    assert values[0][11] == 15
+    assert values[0][-1] == 30
 
 
 def test_sessions_chart_renders_in_cache_read_column() -> None:
